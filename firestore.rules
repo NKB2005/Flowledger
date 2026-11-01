@@ -1,0 +1,171 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: /users/{userId}
+    // Document ID: Firebase Auth UID matching the authenticated user
+    // Fields:
+    //   - initialBalance: number (required, >= 0) - Initial starting balance
+    //   - createdAt: timestamp (optional, immutable) - Document creation timestamp
+    //   - updatedAt: timestamp (optional) - Document modification timestamp
+    //
+    // Collection: /users/{userId}/transactions/{transactionId}
+    // Document ID: Auto-generated string ID
+    // Fields:
+    //   - amount: number (required, > 0) - Transaction monetary amount
+    //   - isExpense: bool (required) - True if expense, false if income
+    //   - category: string (required, 1..64 chars) - Transaction category
+    //   - note: string (required, 0..500 chars) - Note or memo for the transaction
+    //   - paymentMethod: string (required, 1..64 chars) - Payment method (e.g., Cash, Card, UPI, Bank)
+    //   - date: timestamp (required) - Date and time when the transaction took place
+    //   - createdAt: timestamp (optional, immutable) - Record creation timestamp
+    //   - updatedAt: timestamp (optional) - Record modification timestamp
+    //
+    // Collection: /users/{userId}/weeklyBudgets/{budgetId}
+    // Document ID: Encoded category name or auto-generated ID
+    // Fields:
+    //   - category: string (required, 1..64 chars) - Budget category name
+    //   - limit: number (required, >= 0) - Budget threshold amount
+    //   - weekStart: timestamp (optional) - Start date of the budget week
+    //   - createdAt: timestamp (optional, immutable) - Budget creation timestamp
+    //   - updatedAt: timestamp (optional) - Budget modification timestamp
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Check if the request is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if the authenticated user owns the document path
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Validate that request data contains all required keys
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Validate that request data contains only allowed keys (strict schema)
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // Validate string field length between minLen and maxLen
+    function isValidString(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    // Validate optional timestamp field (valid if absent or is timestamp)
+    function isValidOptionalTimestamp(field) {
+      return !(field in request.resource.data) || request.resource.data[field] is timestamp;
+    }
+
+    // Ensure specified immutable fields are not modified during update
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    // Domain validator for users/{userId}
+    function isValidUserDoc() {
+      return hasOnlyAllowedFields(['initialBalance', 'createdAt', 'updatedAt']) &&
+        hasRequiredFields(['initialBalance']) &&
+        request.resource.data.initialBalance is number &&
+        request.resource.data.initialBalance >= 0 &&
+        isValidOptionalTimestamp('createdAt') &&
+        isValidOptionalTimestamp('updatedAt');
+    }
+
+    // Domain validator for users/{userId}/transactions/{transactionId}
+    function isValidTransaction() {
+      return hasOnlyAllowedFields([
+          'amount',
+          'isExpense',
+          'category',
+          'note',
+          'paymentMethod',
+          'date',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        hasRequiredFields([
+          'amount',
+          'isExpense',
+          'category',
+          'note',
+          'paymentMethod',
+          'date'
+        ]) &&
+        request.resource.data.amount is number &&
+        request.resource.data.amount > 0 &&
+        request.resource.data.isExpense is bool &&
+        isValidString('category', 1, 64) &&
+        isValidString('note', 0, 500) &&
+        isValidString('paymentMethod', 1, 64) &&
+        request.resource.data.date is timestamp &&
+        isValidOptionalTimestamp('createdAt') &&
+        isValidOptionalTimestamp('updatedAt');
+    }
+
+    // Domain validator for users/{userId}/weeklyBudgets/{budgetId}
+    function isValidWeeklyBudget() {
+      return hasOnlyAllowedFields(['category', 'limit', 'weekStart', 'createdAt', 'updatedAt']) &&
+        hasRequiredFields(['category', 'limit']) &&
+        isValidString('category', 1, 64) &&
+        request.resource.data.limit is number &&
+        request.resource.data.limit >= 0 &&
+        isValidOptionalTimestamp('weekStart') &&
+        isValidOptionalTimestamp('createdAt') &&
+        isValidOptionalTimestamp('updatedAt');
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // User root documents
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUserDoc();
+      allow update: if isOwner(userId) && isValidUserDoc() && areImmutableFieldsUnchanged(['createdAt']);
+      allow delete: if isOwner(userId);
+
+      // User transactions
+      match /transactions/{transactionId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidTransaction();
+        allow update: if isOwner(userId) && isValidTransaction() && areImmutableFieldsUnchanged(['createdAt']);
+        allow delete: if isOwner(userId);
+      }
+
+      // User weekly budgets
+      match /weeklyBudgets/{budgetId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidWeeklyBudget();
+        allow update: if isOwner(userId) && isValidWeeklyBudget() && areImmutableFieldsUnchanged(['createdAt']);
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    // Default deny for all other collections and documents
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

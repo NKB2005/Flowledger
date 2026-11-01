@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "416120557559",
+    "project_id": "flowledger-b9786",
+    "storage_bucket": "flowledger-b9786.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:416120557559:android:c06f46b1673d8000f468f2",
+        "android_client_info": {
+          "package_name": "com.example.flutter_application_1"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "416120557559-pk4bnir3kq2fous9tbid87ep1ofnls5r.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyASay4NHO3Hi7GWmu081OwJ-EFA4eiqQjk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "416120557559-pk4bnir3kq2fous9tbid87ep1ofnls5r.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FlowLedger — Complete App Guide & Architecture</title>
+<style>
+  @page {
+    size: A4;
+    margin: 12mm 14mm 12mm 14mm;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #1E293B;
+    background-color: #FFFFFF;
+    line-height: 1.5;
+    font-size: 13px;
+  }
+
+  .page {
+    page-break-after: always;
+    break-after: page;
+    position: relative;
+    box-sizing: border-box;
+  }
+  .page:last-child {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  /* Header / Hero */
+  .hero {
+    background: linear-gradient(135deg, #090E1C 0%, #151D33 60%, #1E1238 100%);
+    color: #FFFFFF;
+    padding: 22px 20px;
+    border-radius: 12px;
+    margin-bottom: 16px;
+    border: 1px solid rgba(140, 107, 255, 0.3);
+  }
+  .hero-tag {
+    display: inline-block;
+    background: rgba(59, 235, 176, 0.18);
+    color: #3BEBB0;
+    font-weight: 700;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 3px 9px;
+    border-radius: 16px;
+    margin-bottom: 8px;
+    border: 1px solid rgba(59, 235, 176, 0.4);
+  }
+  .hero h1 {
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    margin-bottom: 5px;
+    background: linear-gradient(90deg, #FFFFFF 0%, #3BEBB0 60%, #8C6BFF 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .hero p {
+    color: #CBD5E1;
+    font-size: 12.5px;
+    line-height: 1.4;
+  }
+  .hero-meta {
+    display: flex;
+    gap: 16px;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
+    font-size: 11px;
+    color: #94A3B8;
+  }
+  .hero-meta span strong {
+    color: #E2E8F0;
+  }
+
+  /* Section Headings */
+  h2 {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0F172A;
+    margin: 16px 0 8px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 2px solid #E2E8F0;
+    padding-bottom: 4px;
+  }
+  h2 .num {
+    background: #090E1C;
+    color: #3BEBB0;
+    font-size: 10.5px;
+    font-weight: 800;
+    padding: 2px 6px;
+    border-radius: 5px;
+  }
+
+  p {
+    margin-bottom: 8px;
+    color: #334155;
+  }
+
+  /* Cards Grid */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .card {
+    background: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 10px 12px;
+    page-break-inside: avoid;
+  }
+  .card.accent-mint {
+    border-left: 4px solid #3BEBB0;
+  }
+  .card.accent-purple {
+    border-left: 4px solid #8C6BFF;
+  }
+  .card.accent-blue {
+    border-left: 4px solid #38BDF8;
+  }
+  .card.accent-amber {
+    border-left: 4px solid #F59E0B;
+  }
+
+  .card-title {
+    font-weight: 700;
+    font-size: 12.5px;
+    color: #0F172A;
+    margin-bottom: 3px;
+  }
+  .card-body {
+    font-size: 11.5px;
+    color: #475569;
+    line-height: 1.4;
+  }
+
+  /* Bullet lists */
+  ul {
+    margin: 4px 0 8px 16px;
+    color: #334155;
+  }
+  li {
+    margin-bottom: 3px;
+    font-size: 12px;
+  }
+  li strong {
+    color: #0F172A;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 8px 0 12px 0;
+    font-size: 11.5px;
+    page-break-inside: avoid;
+  }
+  th, td {
+    padding: 6px 9px;
+    text-align: left;
+    border: 1px solid #E2E8F0;
+  }
+  th {
+    background: #090E1C;
+    color: #FFFFFF;
+    font-weight: 700;
+    font-size: 11px;
+  }
+  th:first-child {
+    border-top-left-radius: 5px;
+  }
+  th:last-child {
+    border-top-right-radius: 5px;
+  }
+  tr:nth-child(even) {
+    background: #F8FAFC;
+  }
+  td strong {
+    color: #0F172A;
+  }
+
+  /* Flow / Step diagram */
+  .flow-container {
+    background: #F1F5F9;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 8px 0 10px 0;
+    page-break-inside: avoid;
+  }
+  .flow-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .flow-step:last-child {
+    margin-bottom: 0;
+  }
+  .step-badge {
+    background: #090E1C;
+    color: #3BEBB0;
+    font-weight: 800;
+    font-size: 10.5px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .step-text strong {
+    font-size: 12px;
+    color: #0F172A;
+    display: block;
+  }
+  .step-text p {
+    font-size: 11px;
+    color: #475569;
+    margin: 2px 0 0 0;
+  }
+
+  /* Callout Box */
+  .callout {
+    background: #F0FDF4;
+    border-left: 4px solid #16A34A;
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin: 8px 0;
+    font-size: 11.5px;
+    color: #14532D;
+    page-break-inside: avoid;
+  }
+  .callout strong {
+    color: #14532D;
+  }
+
+  .callout-info {
+    background: #EFF6FF;
+    border-left: 4px solid #2563EB;
+    color: #1E3A8A;
+  }
+  .callout-info strong {
+    color: #1E3A8A;
+  }
+
+  /* Footer */
+  .footer {
+    border-top: 1px solid #E2E8F0;
+    padding-top: 8px;
+    margin-top: 14px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 10.5px;
+    color: #94A3B8;
+  }
+</style>
+</head>
+<body>
+
+  <!-- PAGE 1 -->
+  <div class="page">
+    <div class="hero">
+      <div class="hero-tag">Official App Architecture & Overview</div>
+      <h1>FlowLedger (Expense Tracker)</h1>
+      <p>A simple, beginner-friendly guide explaining the core features, underlying technologies, system architecture, and how the entire app works under the hood.</p>
+      <div class="hero-meta">
+        <span><strong>Application:</strong> FlowLedger v1.0</span>
+        <span><strong>Framework:</strong> Flutter 3 (Dart)</span>
+        <span><strong>Database:</strong> SQLite + Cloud Firestore</span>
+        <span><strong>Platforms:</strong> Android, iOS, Web, Windows</span>
+      </div>
+    </div>
+
+    <h2><span class="num">01</span> What is FlowLedger?</h2>
+    <p>
+      <strong>FlowLedger</strong> is a calm, modern personal finance application built to help everyday people track where their money goes. Many expense apps are either cluttered with complicated financial jargon, aggressive advertisements, or require constant internet connections. FlowLedger was engineered around three golden principles:
+    </p>
+    <ul>
+      <li><strong>Privacy & Offline-First:</strong> Your money records live on your physical device first in a secure SQLite database. You can track expenses seamlessly on an airplane or without mobile data.</li>
+      <li><strong>Effortless Visual Clarity:</strong> Clean glassmorphic surfaces, automatic expense color-coding, high-contrast calendar views, and instant dark/light mode toggles.</li>
+      <li><strong>Open Data Freedom:</strong> You never get locked in. You can export complete, styled Microsoft Excel (<code>.xlsx</code>) spreadsheets anytime or import records from other apps (like <em>Expense Note</em> or custom Excel/CSV sheets).</li>
+    </ul>
+
+    <h2><span class="num">02</span> Main Features in Simple Words</h2>
+    <div class="grid-2">
+      <div class="card accent-mint">
+        <div class="card-title">💸 1. Fast Transaction Logging</div>
+        <div class="card-body">
+          Quickly record an expense or income with amount, custom date, category (Food, Shopping, Bills, Transport, etc.), payment method (Card, UPI, Cash), and notes. Real-time balance calculations update instantly.
+        </div>
+      </div>
+
+      <div class="card accent-purple">
+        <div class="card-title">📊 2. Monthly Insights & Calendar</div>
+        <div class="card-body">
+          A visual calendar lets you tap any day of the month to see exactly what you spent that day. Interactive category breakdown bars show you what percentage of your budget went where.
+        </div>
+      </div>
+
+      <div class="card accent-blue">
+        <div class="card-title">📑 3. Excel & CSV Export/Import</div>
+        <div class="card-body">
+          Export your entire expense history into a styled <code>.xlsx</code> workbook with one tap and share it via WhatsApp, Email, or Drive. Easily import spreadsheets with automatic date and column recognition.
+        </div>
+      </div>
+
+      <div class="card accent-amber">
+        <div class="card-title">🌗 4. Synchronized Dark / Light Theme</div>
+        <div class="card-body">
+          Switch effortlessly between a deep space dark theme (<code>#090E1C</code>) and a crisp modern light theme. All app bars, calendars, cards, and text adapt with zero stutter.
+        </div>
+      </div>
+
+      <div class="card accent-mint">
+        <div class="card-title">🔄 5. Multi-Device Cloud Sync</div>
+        <div class="card-body">
+          Powered by Google Firebase Authentication and Cloud Firestore. If you sign in, your data backs up safely to the cloud so you can switch phones without losing a single rupee.
+        </div>
+      </div>
+
+      <div class="card accent-purple">
+        <div class="card-title">✨ 6. Figma Brand Splash & Logo</div>
+        <div class="card-body">
+          Designed faithfully to the brand identity: custom neon glowing "F" emblem squircle, corner ambient lighting, floating particles, and zero cold-start white screen flash on Android.
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span>FlowLedger Guide & Documentation</span>
+      <span>Page 1 of 3</span>
+    </div>
+  </div>
+
+  <!-- PAGE 2 -->
+  <div class="page">
+    <h2><span class="num">03</span> Technologies Used & Why We Picked Them</h2>
+    <p>Every tool and library in FlowLedger was chosen for high performance, reliability, and ease of maintenance:</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Technology</th>
+          <th>What It Does</th>
+          <th>Why It Was Chosen (Simple Reason)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Flutter & Dart</strong></td>
+          <td>Cross-Platform UI Framework</td>
+          <td>Allows writing one single codebase that compiles into native high-performance apps for Android, iOS, Windows, and Web running at smooth 60/120 frames per second.</td>
+        </tr>
+        <tr>
+          <td><strong>SQLite (sqflite)</strong></td>
+          <td>Local On-Device Database</td>
+          <td>Stores all expenses directly inside the phone's memory. Extremely fast (microsecond lookups) and works 100% offline without needing internet or server servers.</td>
+        </tr>
+        <tr>
+          <td><strong>Firebase Auth & Firestore</strong></td>
+          <td>Cloud Accounts & Real-Time Sync</td>
+          <td>Provides secure email sign-in and real-time cloud database backup. When online, local changes automatically synchronize with the cloud.</td>
+        </tr>
+        <tr>
+          <td><strong>Excel Package</strong></td>
+          <td>Spreadsheet Generator & Parser</td>
+          <td>Generates real binary <code>.xlsx</code> files in memory and reads Excel rows without requiring Microsoft Office to be installed.</td>
+        </tr>
+        <tr>
+          <td><strong>Share Plus (share_plus)</strong></td>
+          <td>Native Android/iOS Sharing</td>
+          <td>Triggers the native operating system share sheet so you can directly send your Excel report to WhatsApp, Gmail, Telegram, or Google Drive.</td>
+        </tr>
+        <tr>
+          <td><strong>File Picker</strong></td>
+          <td>System File Dialogs</td>
+          <td>Allows the user to browse their device storage and pick <code>.xlsx</code> or <code>.csv</code> files when importing external data.</td>
+        </tr>
+        <tr>
+          <td><strong>Custom Painter & Shaders</strong></td>
+          <td>Glows & Gradients</td>
+          <td>Uses Flutter's GPU-accelerated graphics engine to draw smooth ambient lighting, glowing dots, and gradient text.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2><span class="num">04</span> How the App Works (Under the Hood)</h2>
+    <p>Here is what happens inside the application from the moment you tap an action on screen:</p>
+
+    <div class="flow-container">
+      <div class="flow-step">
+        <div class="step-badge">1</div>
+        <div class="step-text">
+          <strong>User Enters an Expense</strong>
+          <p>You tap "+" on the home screen, type ₹350 for Lunch, pick "Food", and tap Save.</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="step-badge">2</div>
+        <div class="step-text">
+          <strong>Immediate Local Persistence (SQLite)</strong>
+          <p>The app instantly converts the entry into an <code>ExpenseRecord</code> and saves it to the SQLite database on your device. The home screen numbers update immediately with zero loading lag.</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="step-badge">3</div>
+        <div class="step-text">
+          <strong>Background Cloud Sync (Firebase)</strong>
+          <p>If you are signed in and connected to Wi-Fi/data, a background service uploads a copy to your private Google Cloud Firestore collection. If offline, it waits safely until you reconnect.</p>
+        </div>
+      </div>
+      <div class="flow-step">
+        <div class="step-badge">4</div>
+        <div class="step-text">
+          <strong>Live State Broadcast</strong>
+          <p>All open screens (Home Dashboard, Insight Calendar, and Settings) receive a notification via Flutter's <code>Listenable / ChangeNotifier</code>, smoothly refreshing charts and balances.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout-info">
+      <strong>💡 Why Local-First Matters:</strong> Even if you are in an underground metro or in a remote area with zero network reception, FlowLedger will never freeze, display spinning circles, or fail to save your expenses. Everything is saved locally first!
+    </div>
+
+    <div class="footer">
+      <span>FlowLedger Guide & Documentation</span>
+      <span>Page 2 of 3</span>
+    </div>
+  </div>
+
+  <!-- PAGE 3 -->
+  <div class="page">
+    <h2><span class="num">05</span> Key Challenges We Solved & How We Did It</h2>
+    <p>During the development and refinement of FlowLedger, we addressed several technical challenges to ensure a world-class experience:</p>
+
+    <div class="grid-2">
+      <div class="card accent-mint">
+        <div class="card-title">1. Synchronized Theme Switching</div>
+        <div class="card-body">
+          <strong>The Problem:</strong> When toggling dark mode, app bars in some screens changed color slightly faster than the body, causing visual stutter.<br>
+          <strong>The Solution:</strong> We created a centralized <code>AppColor.revision</code> notifier and set <code>themeAnimationDuration: Duration.zero</code> on MaterialApp. Now, every layer updates in the exact same millisecond frame!
+        </div>
+      </div>
+
+      <div class="card accent-purple">
+        <div class="card-title">2. Calendar Text Contrast in Light Mode</div>
+        <div class="card-body">
+          <strong>The Problem:</strong> On the Insights page, calendar numbers became washed out or stayed dark-themed when in light mode.<br>
+          <strong>The Solution:</strong> We wired calendar day tiles to listen dynamically to <code>AppColor.isDarkMode</code>, applying sharp high-contrast slate colors (<code>#1E293B</code>) in light mode and soft silver (<code>#E2E8F0</code>) in dark mode.
+        </div>
+      </div>
+
+      <div class="card accent-blue">
+        <div class="card-title">3. Smart Excel / Expense Note Import</div>
+        <div class="card-body">
+          <strong>The Problem:</strong> Different apps export dates in random formats (e.g. <code>2024-03-15</code>, <code>15/03/2024</code>, or raw Excel serial numbers like <code>45229</code>).<br>
+          <strong>The Solution:</strong> We wrote a multi-strategy parser (<code>ExpenseNoteImporter</code>) that detects header names automatically, calculates Gregorian calendar dates from Excel serial numbers, and skips duplicate rows safely.
+        </div>
+      </div>
+
+      <div class="card accent-amber">
+        <div class="card-title">4. Figma Splash Screen & Android 12 Flash</div>
+        <div class="card-body">
+          <strong>The Problem:</strong> Android 12 launches with a default white circle flash before Flutter starts.<br>
+          <strong>The Solution:</strong> We updated Android's native <code>LaunchTheme</code> to use <code>#090E1C</code>, and crafted a Flutter splash controller with curved ambient glows, emblem scaling, and a smooth cross-fade into Home.
+        </div>
+      </div>
+    </div>
+
+    <h2><span class="num">06</span> Summary at a Glance</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Aspect</th>
+          <th>Implementation Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>App Name</strong></td>
+          <td><strong>FlowLedger</strong> (registered across Android, iOS, Windows, Web, and Linux)</td>
+        </tr>
+        <tr>
+          <td><strong>App Icon</strong></td>
+          <td>Custom neon purple-to-teal squircle emblem built across all Android mipmap densities (mdpi to xxxhdpi)</td>
+        </tr>
+        <tr>
+          <td><strong>Export Support</strong></td>
+          <td>Native <code>.xlsx</code> spreadsheet with styled bold headers, formatted currency amounts, and share sheet</td>
+        </tr>
+        <tr>
+          <td><strong>Import Support</strong></td>
+          <td>Compatible with Microsoft Excel (<code>.xlsx</code>), CSV files, and direct migration from Expense Note</td>
+        </tr>
+        <tr>
+          <td><strong>Theme Support</strong></td>
+          <td>Seamless synchronized switching between Space Navy Dark (<code>#090E1C</code>) and Modern Light (<code>#F0F3F8</code>)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout">
+      <strong>✨ Conclusion:</strong> FlowLedger combines the speed and privacy of an offline local database with the beauty of modern glassmorphic Flutter UI, making personal finance tracking enjoyable, fast, and stress-free.
+    </div>
+
+    <div class="footer">
+      <span>FlowLedger Guide & Documentation</span>
+      <span>Page 3 of 3</span>
+    </div>
+  </div>
+
+</body>
+</html>
