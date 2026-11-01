@@ -4,6 +4,7 @@ import 'package:expense_tracker/pages/dashboard_page.dart';
 import 'package:expense_tracker/core/expense_store.dart';
 import 'package:expense_tracker/core/profile_image_store.dart';
 import 'package:expense_tracker/core/app_colors.dart';
+import 'package:expense_tracker/core/app_config.dart';
 import 'package:expense_tracker/core/bank_sms_parser.dart';
 import 'package:expense_tracker/core/bank_sms_service.dart';
 import 'package:expense_tracker/pages/insights_page.dart';
@@ -755,7 +756,23 @@ void main() {
     expect(find.text('Bank SMS auto-tracking'), findsOneWidget);
     expect(find.textContaining('Turned off'), findsOneWidget);
     expect(find.text('Scan recent bank SMS'), findsOneWidget);
+    // Hidden by default for regular / new users
+    expect(find.text('Bank SMS simulator / tester'), findsNothing);
+
+    // Verify unlocked and visible for developer/owner accounts
+    AppConfig.developerModeOverride = true;
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: Scaffold(
+            body: SettingsPage(isDarkMode: true, onThemeChanged: (_) {}),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
     expect(find.text('Bank SMS simulator / tester'), findsOneWidget);
+    AppConfig.developerModeOverride = false;
 
     // Tapping switch asks with a confirmation dialog
     await tester.tap(find.text('Bank SMS auto-tracking'));

@@ -3,7 +3,9 @@ import 'package:file_selector/file_selector.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../core/app_colors.dart';
+import '../core/app_config.dart';
 import '../core/bank_sms_parser.dart';
 import '../core/bank_sms_service.dart';
 import '../core/excel_service.dart';
@@ -71,10 +73,63 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     return 'Current Account';
   }
 
+  bool _developerModeUnlocked = false;
+  int _devTapCount = 0;
+  DateTime? _lastDevTap;
+
+  bool get _canAccessTester {
+    final email = _safeFirebaseUser?.email;
+    final uid = _effectiveUserId;
+    if (AppConfig.isDeveloper(email: email, uid: uid)) return true;
+    return _developerModeUnlocked;
+  }
+
+  Future<void> _loadDeveloperMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _developerModeUnlocked =
+            prefs.getBool('developer_mode_unlocked') ?? false;
+      });
+    }
+  }
+
+  void _onDevHeaderTap() async {
+    final now = DateTime.now();
+    if (_lastDevTap == null ||
+        now.difference(_lastDevTap!) > const Duration(seconds: 2)) {
+      _devTapCount = 0;
+    }
+    _lastDevTap = now;
+    _devTapCount++;
+    if (_devTapCount >= 5) {
+      _devTapCount = 0;
+      final prefs = await SharedPreferences.getInstance();
+      final newMode = !_developerModeUnlocked;
+      await prefs.setBool('developer_mode_unlocked', newMode);
+      if (mounted) {
+        setState(() => _developerModeUnlocked = newMode);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: AppColor.card,
+            content: Text(
+              newMode
+                  ? 'Developer options unlocked for tester.'
+                  : 'Developer options hidden.',
+              style: TextStyle(color: AppColor.text),
+            ),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _loadSmsPreference();
+    _loadDeveloperMode();
   }
 
   @override
@@ -82,6 +137,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.userId != widget.userId) {
       _loadSmsPreference();
+      _loadDeveloperMode();
     }
   }
 
@@ -1215,28 +1271,30 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   : Icon(Icons.chevron_right, color: AppColor.muted),
               onTap: _isScanningSms ? null : _scanRecentBankSms,
             ),
-            Divider(
-              height: 1,
-              thickness: 1,
-              indent: 56,
-              color: AppColor.border.withValues(alpha: 0.3),
-            ),
-            ListTile(
-              leading: Icon(Icons.science_outlined, color: AppColor.mint),
-              title: Text(
-                'Bank SMS simulator / tester',
-                style: TextStyle(
-                  color: AppColor.text,
-                  fontWeight: FontWeight.w700,
+            if (_canAccessTester) ...[
+              Divider(
+                height: 1,
+                thickness: 1,
+                indent: 56,
+                color: AppColor.border.withValues(alpha: 0.3),
+              ),
+              ListTile(
+                leading: Icon(Icons.science_outlined, color: AppColor.mint),
+                title: Text(
+                  'Bank SMS simulator / tester',
+                  style: TextStyle(
+                    color: AppColor.text,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
+                subtitle: Text(
+                  'Test SMS parsing or paste a sample bank message',
+                  style: TextStyle(color: AppColor.muted, fontSize: 12),
+                ),
+                trailing: Icon(Icons.chevron_right, color: AppColor.muted),
+                onTap: _showTestBankSmsDialog,
               ),
-              subtitle: Text(
-                'Test SMS parsing or paste a sample bank message',
-                style: TextStyle(color: AppColor.muted, fontSize: 12),
-              ),
-              trailing: Icon(Icons.chevron_right, color: AppColor.muted),
-              onTap: _showTestBankSmsDialog,
-            ),
+            ],
           ],
         ),
       ),
@@ -1368,37 +1426,41 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         ),
       ),
       const SizedBox(height: 24),
-      Center(
-        child: Column(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Image.asset(
-                'assets/logo/app_logo_full.png',
-                width: 36,
-                height: 36,
-                fit: BoxFit.cover,
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _onDevHeaderTap,
+        child: Center(
+          child: Column(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.asset(
+                  'assets/logo/app_logo_full.png',
+                  width: 36,
+                  height: 36,
+                  fit: BoxFit.cover,
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'FlowLedger',
-              style: TextStyle(
-                color: AppColor.text,
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.2,
+              const SizedBox(height: 8),
+              Text(
+                'FlowLedger',
+                style: TextStyle(
+                  color: AppColor.text,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.2,
+                ),
               ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              'Version 1.0.0 • A calmer way to understand your money',
-              style: TextStyle(
-                color: AppColor.muted,
-                fontSize: 11,
+              const SizedBox(height: 2),
+              Text(
+                'Version 1.0.0 • A calmer way to understand your money',
+                style: TextStyle(
+                  color: AppColor.muted,
+                  fontSize: 11,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
         const SizedBox(height: 16),
