@@ -1,7 +1,7 @@
 class AppConfig {
   /// List of owner/developer emails permitted to access developer tools (e.g. Bank SMS simulator).
   static final Set<String> developerEmails = {
-    // Owner / developer accounts will be registered here
+    'krishnaniranjan773@gmail.com',
   };
 
   /// Set of developer user IDs (UIDs)
