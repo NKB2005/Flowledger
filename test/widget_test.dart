@@ -7,6 +7,8 @@ import 'package:expense_tracker/core/app_colors.dart';
 import 'package:expense_tracker/core/app_config.dart';
 import 'package:expense_tracker/core/bank_sms_parser.dart';
 import 'package:expense_tracker/core/bank_sms_service.dart';
+import 'package:expense_tracker/core/merchant_category_store.dart';
+import 'package:expense_tracker/data/transaction_repository.dart';
 import 'package:expense_tracker/pages/insights_page.dart';
 import 'package:expense_tracker/pages/profile_page.dart';
 import 'package:expense_tracker/pages/settings_page.dart';
@@ -28,6 +30,8 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    MerchantCategoryStore.resetForTest();
+    TransactionRepository.resetMemoryCacheForTest();
     AppColor.setDarkMode(true);
     AppColor.setPalette('mint');
     AppColor.dockBlur = 18;
@@ -165,6 +169,23 @@ void main() {
 
     // Guest / null user is also isolated and off
     expect(await BankSmsService.isAutoSyncEnabled(), isFalse);
+  });
+
+  test('BankSmsService payment notification methods execute safely', () async {
+    final parsed = ParsedBankSms(
+      amount: 250,
+      isExpense: true,
+      category: 'Food',
+      note: 'Swiggy',
+      paymentMethod: 'Bank / UPI',
+      rawMessage: 'Rs. 250 debited at Swiggy',
+      sender: 'HDFCBK',
+      isConfident: true,
+      date: DateTime.now(),
+    );
+    await BankSmsService.showPaymentNotification(parsed);
+    final pending = await BankSmsService.getPendingCategorizeTransaction();
+    expect(pending, isNull);
   });
 
   testWidgets('budget tile shows spending beyond its limit', (tester) async {
@@ -694,6 +715,62 @@ void main() {
     // Verify Undo snackbar is visible
     expect(find.text('Undo'), findsOneWidget);
     expect(find.text('Expense "Burger Lunch" deleted'), findsOneWidget);
+
+    // Tapping Undo immediately dismisses the snackbar
+    await tester.tap(find.text('Undo'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Undo'), findsNothing);
+  });
+
+  testWidgets(
+      'deleting a transaction on dashboard displays Undo snackbar and tapping Undo dismisses it',
+      (tester) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final transactions = [
+      AppTransaction(
+        id: 'tx-dash-1',
+        amount: 250,
+        isExpense: true,
+        category: 'Food',
+        note: 'Coffee Break',
+        date: DateTime.now(),
+      ),
+    ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          transactionsProvider.overrideWith((ref) => Stream.value(transactions)),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: DashboardPage(store: ExpenseStore()),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Coffee Break'), findsOneWidget);
+
+    // Swipe Dismissible on dashboard to delete
+    await tester.drag(find.text('Coffee Break'), const Offset(-500, 0));
+    await tester.pumpAndSettle();
+
+    // Verify Undo snackbar is visible
+    expect(find.text('Undo'), findsOneWidget);
+    expect(find.text('Expense "Coffee Break" deleted'), findsOneWidget);
+
+    // Tapping Undo immediately dismisses the snackbar
+    await tester.tap(find.text('Undo'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Undo'), findsNothing);
   });
 
   group('BankSmsParser tests', () {
@@ -731,12 +808,66 @@ void main() {
       expect(parsed.accountDigits, contains('4321'));
     });
 
+    test('debited SMS with credited-to beneficiary is correctly parsed as expense and never salary', () {
+      const sms = 'Your A/c no. XX1234 is debited for Rs.55.00 on 05-11-26 and credited to account of Chai Point UPI ref 123456';
+      final parsed = BankSmsParser.parse(sms);
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, 55.0);
+      expect(parsed.isExpense, isTrue);
+      expect(parsed.category, isNot(equals('Salary')));
+      expect(parsed.category, 'Food');
+    });
+
+    test('generic transfer credit does not default to salary', () {
+      const sms = 'Your A/C 1234 is credited with INR 500.00 on 05-Nov-26 by transfer from Rahul. Clear Bal INR 12,000.00';
+      final parsed = BankSmsParser.parse(sms);
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, 500.0);
+      expect(parsed.isExpense, isFalse);
+      expect(parsed.category, isNot(equals('Salary')));
+      expect(parsed.category, 'Other');
+    });
+
     test('ignores OTP, login alerts, and non-transactions', () {
       const otpSms = 'Your OTP for transaction at Amazon is 492810. Do not share with anyone.';
       expect(BankSmsParser.parse(otpSms), isNull);
 
       const promoSms = 'Congratulations! You are pre-approved for personal loan up to Rs 5,00,000. Apply now.';
       expect(BankSmsParser.parse(promoSms), isNull);
+    });
+
+    test('learns merchant category and uses it for future parsing', () async {
+      const sms = 'A/C 1234 debited by Rs 250 on 05-Nov-26 to Blue Tokai. Avl Bal Rs 5,000';
+      final initial = BankSmsParser.parse(sms);
+      expect(initial, isNotNull);
+      expect(initial!.category, 'Other');
+      expect(initial.isConfident, isFalse);
+
+      // User categorizes transaction as Food -> app learns
+      await MerchantCategoryStore.learn('Blue Tokai', 'Food');
+
+      final learned = BankSmsParser.parse(sms);
+      expect(learned, isNotNull);
+      expect(learned!.category, 'Food');
+      expect(learned.isConfident, isTrue);
+    });
+
+    test('MerchantCategoryStore respects user overrides over built-in defaults', () async {
+      const sms = 'A/C 1234 debited by Rs 400 on 05-Nov-26 to Amazon. Avl Bal Rs 10,000';
+      final defaultParsed = BankSmsParser.parse(sms);
+      expect(defaultParsed!.category, 'Shopping');
+
+      // User re-maps Amazon to Bills
+      await MerchantCategoryStore.learn('Amazon', 'Bills');
+      final overridden = BankSmsParser.parse(sms);
+      expect(overridden!.category, 'Bills');
+
+      // Removing rule falls back to default
+      await MerchantCategoryStore.removeRule('Amazon');
+      final reverted = BankSmsParser.parse(sms);
+      expect(reverted!.category, 'Shopping');
     });
   });
 
@@ -756,6 +887,7 @@ void main() {
     expect(find.text('Bank SMS auto-tracking'), findsOneWidget);
     expect(find.textContaining('Turned off'), findsOneWidget);
     expect(find.text('Scan recent bank SMS'), findsOneWidget);
+    expect(find.text('Smart merchant memory'), findsOneWidget);
     // Hidden by default for regular / new users
     expect(find.text('Bank SMS simulator / tester'), findsNothing);
 

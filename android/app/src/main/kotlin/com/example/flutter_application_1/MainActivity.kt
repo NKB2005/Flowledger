@@ -1,10 +1,12 @@
 package com.example.flutter_application_1
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -17,6 +19,36 @@ class MainActivity : FlutterActivity() {
 
     private var eventSink: EventChannel.EventSink? = null
     private var pendingPermissionResult: MethodChannel.Result? = null
+    private var methodChannel: MethodChannel? = null
+    private var pendingCategorizeData: Map<String, Any>? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        NotificationHelper.createNotificationChannel(this)
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent == null) return
+        val action = intent.getStringExtra("action")
+        if (action == "categorize_payment") {
+            val data = mapOf(
+                "amount" to intent.getDoubleExtra("amount", 0.0),
+                "merchant" to (intent.getStringExtra("merchant") ?: ""),
+                "category" to (intent.getStringExtra("category") ?: "Other"),
+                "isExpense" to intent.getBooleanExtra("isExpense", true),
+                "transactionId" to (intent.getStringExtra("transactionId") ?: "")
+            )
+            pendingCategorizeData = data
+            methodChannel?.invokeMethod("onCategorizePaymentIntent", data)
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -45,30 +77,34 @@ class MainActivity : FlutterActivity() {
             }
         )
 
-        // Method channel for checking permissions, requesting permissions, and scanning inbox
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, methodChannelName).setMethodCallHandler { call, result ->
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, methodChannelName)
+        methodChannel = channel
+        channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "checkSmsPermission" -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         val receiveGranted = checkSelfPermission(Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED
                         val readGranted = checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
-                        result.success(receiveGranted && readGranted)
+                        val notificationGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                        } else true
+                        result.success(receiveGranted && readGranted && notificationGranted)
                     } else {
                         result.success(true)
                     }
                 }
                 "requestSmsPermission" -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        val receiveGranted = checkSelfPermission(Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED
-                        val readGranted = checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
-                        if (receiveGranted && readGranted) {
+                        val perms = mutableListOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            perms.add(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                        val missing = perms.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+                        if (missing.isEmpty()) {
                             result.success(true)
                         } else {
                             pendingPermissionResult = result
-                            requestPermissions(
-                                arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS),
-                                permissionRequestCode
-                            )
+                            requestPermissions(missing.toTypedArray(), permissionRequestCode)
                         }
                     } else {
                         result.success(true)
@@ -82,6 +118,31 @@ class MainActivity : FlutterActivity() {
                     } catch (e: Exception) {
                         result.error("READ_ERROR", e.message, null)
                     }
+                }
+                "showPaymentNotification" -> {
+                    try {
+                        val amount = call.argument<Double>("amount") ?: 0.0
+                        val merchant = call.argument<String>("merchant") ?: ""
+                        val category = call.argument<String>("category") ?: "Other"
+                        val isExpense = call.argument<Boolean>("isExpense") ?: true
+                        val transactionId = call.argument<String>("transactionId") ?: ""
+                        NotificationHelper.showPaymentNotification(
+                            this,
+                            amount,
+                            merchant,
+                            category,
+                            isExpense,
+                            transactionId
+                        )
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("NOTIF_ERROR", e.message, null)
+                    }
+                }
+                "getPendingCategorizeTransaction" -> {
+                    val data = pendingCategorizeData
+                    pendingCategorizeData = null
+                    result.success(data)
                 }
                 else -> result.notImplemented()
             }

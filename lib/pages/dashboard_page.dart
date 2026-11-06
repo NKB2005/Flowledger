@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -6,6 +7,7 @@ import '../core/expense_store.dart';
 import '../core/app_colors.dart';
 import '../core/auth_service.dart';
 import '../core/profile_image_store.dart';
+import '../data/transaction_repository.dart';
 import '../models/categories.dart';
 import '../providers/providers.dart';
 import '../widgets/app_text.dart';
@@ -34,18 +36,34 @@ class DashboardPage extends ConsumerWidget {
       builder: (context, _) {
         final user = AuthService().currentUser;
         final name = displayNameForUser(user);
-        final transactions = ref.watch(transactionsProvider).value ?? const [];
+
+        // 1. Instantly read memory & disk-cached balances and transactions (0ms delay)
+        final cachedTx = TransactionRepository.getCachedTransactions(user?.uid);
+        final cachedInitBal = TransactionRepository.getCachedInitialBalance(user?.uid);
+        final cachedNet = TransactionRepository.getCachedNetBalance(user?.uid);
+
+        final transactionsAsync = ref.watch(transactionsProvider);
+        final initialBalanceAsync = ref.watch(initialBalanceProvider);
+
+        final transactions = transactionsAsync.value ?? cachedTx ?? const [];
         final budgets = ref.watch(weeklyBudgetsProvider).value ?? const [];
-        final initialBalance = ref.watch(initialBalanceProvider).value;
+        final initialBalance = initialBalanceAsync.value ?? cachedInitBal;
+
         final income = transactions
             .where((transaction) => !transaction.isExpense)
             .fold<double>(0, (sum, transaction) => sum + transaction.amount);
         final expenses = transactions
             .where((transaction) => transaction.isExpense)
             .fold<double>(0, (sum, transaction) => sum + transaction.amount);
-        final balance = initialBalance == null
-            ? null
-            : initialBalance + income - expenses;
+
+        final double? balance;
+        if (initialBalance != null && (transactions.isNotEmpty || transactionsAsync.hasValue)) {
+          balance = initialBalance + income - expenses;
+        } else {
+          balance = cachedNet ?? (initialBalance == null ? null : initialBalance + income - expenses);
+        }
+
+        final isDark = Theme.of(context).brightness == Brightness.dark;
 
         return LiquidBackground(
           child: CustomScrollView(
@@ -54,13 +72,34 @@ class DashboardPage extends ConsumerWidget {
                 pinned: true,
                 floating: false,
                 elevation: 0,
-                backgroundColor: Colors.transparent,
+                backgroundColor: isDark
+                    ? const Color(0xFF090E1C).withValues(alpha: 0.75)
+                    : const Color(0xFFF0F3F8).withValues(alpha: 0.82),
                 surfaceTintColor: Colors.transparent,
                 scrolledUnderElevation: 0,
-                forceMaterialTransparency: true,
+                forceMaterialTransparency: false,
                 automaticallyImplyLeading: false,
                 toolbarHeight: 68,
                 titleSpacing: 0,
+                flexibleSpace: ClipRect(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                    child: Container(
+                      color: isDark
+                          ? const Color(0xFF090E1C).withValues(alpha: 0.72)
+                          : const Color(0xFFF0F3F8).withValues(alpha: 0.80),
+                    ),
+                  ),
+                ),
+                bottom: PreferredSize(
+                  preferredSize: const Size.fromHeight(1),
+                  child: Container(
+                    height: 1,
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.08)
+                        : Colors.black.withValues(alpha: 0.06),
+                  ),
+                ),
                 title: AppHeader(
                   title: 'FlowLedger',
                   subtitle: dashboardGreeting(null, name),
@@ -112,6 +151,18 @@ class DashboardPage extends ConsumerWidget {
                   income: income,
                   expenses: expenses,
                   onSetInitialBalance: () => _setInitialBalance(context, ref),
+                  onEditBalance: balance == null
+                      ? null
+                      : () {
+                          final currentBalance = balance!;
+                          _editBalance(
+                            context,
+                            ref,
+                            currentBalance: currentBalance,
+                            income: income,
+                            expenses: expenses,
+                          );
+                        },
                 ),
                 if (store.latestNote.isNotEmpty) ...[
                   const SizedBox(height: 16),
@@ -181,16 +232,79 @@ class DashboardPage extends ConsumerWidget {
                       symbol: 'Rs. ',
                       decimalDigits: 2,
                     ).format(transaction.amount);
+                    final itemLabel = transaction.note.trim().isNotEmpty
+                        ? transaction.note.trim()
+                        : transaction.category;
+                    final typeLabel =
+                        transaction.isExpense ? 'Expense' : 'Income';
+
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 8),
-                      child: TransactionTile(
-                        category.icon,
-                        transaction.note.isEmpty
-                            ? transaction.category
-                            : transaction.note,
-                        '${transaction.category} • $date',
-                        '${transaction.isExpense ? '-' : '+'}$amount',
-                        transaction.isExpense ? AppColor.coral : AppColor.mint,
+                      child: Dismissible(
+                        key: ValueKey('dash_${transaction.id}'),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          decoration: BoxDecoration(
+                            color: AppColor.coral.withValues(alpha: .75),
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 20),
+                          child: const Icon(Icons.delete, color: Colors.white),
+                        ),
+                        onDismissed: (_) {
+                          final repo = ref.read(transactionRepositoryProvider);
+                          repo?.delete(transaction.id);
+
+                          ScaffoldMessenger.of(context).clearSnackBars();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              behavior: SnackBarBehavior.floating,
+                              margin: const EdgeInsets.fromLTRB(16, 0, 16, 92),
+                              backgroundColor:
+                                  Theme.of(context).colorScheme.surface,
+                              elevation: 6,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                                side: BorderSide(
+                                  color: AppColor.border,
+                                  width: 1,
+                                ),
+                              ),
+                              content: Text(
+                                '$typeLabel "$itemLabel" deleted',
+                                style: TextStyle(
+                                  color: AppColor.text,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              action: SnackBarAction(
+                                label: 'Undo',
+                                textColor: AppColor.mint,
+                                onPressed: () {
+                                  repo?.restore(transaction);
+                                  ScaffoldMessenger.of(context)
+                                      .hideCurrentSnackBar();
+                                },
+                              ),
+                              duration: const Duration(seconds: 5),
+                            ),
+                          );
+                        },
+                        child: TransactionTile(
+                          category.icon,
+                          transaction.note.isEmpty
+                              ? transaction.category
+                              : transaction.note,
+                          '${transaction.category} • $date',
+                          '${transaction.isExpense ? '-' : '+'}$amount',
+                          transaction.isExpense
+                              ? AppColor.coral
+                              : AppColor.mint,
+                        ),
                       ),
                     );
                   }),
@@ -222,10 +336,53 @@ class DashboardPage extends ConsumerWidget {
       }
     }
   }
+
+  Future<void> _editBalance(
+    BuildContext context,
+    WidgetRef ref, {
+    required double currentBalance,
+    required double income,
+    required double expenses,
+  }) async {
+    final newTargetBalance = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => _SetBalanceDialog(
+        initialValue: currentBalance,
+        isEditing: true,
+      ),
+    );
+    if (newTargetBalance == null) return;
+    final repo = ref.read(transactionRepositoryProvider);
+    if (repo == null) return;
+    try {
+      final calculatedInitialBalance = newTargetBalance - income + expenses;
+      await repo.setInitialBalance(calculatedInitialBalance);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Balance updated successfully'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not set balance: $error')),
+        );
+      }
+    }
+  }
 }
 
 class _SetBalanceDialog extends StatefulWidget {
-  const _SetBalanceDialog();
+  const _SetBalanceDialog({
+    this.initialValue,
+    this.isEditing = false,
+  });
+
+  final double? initialValue;
+  final bool isEditing;
 
   @override
   State<_SetBalanceDialog> createState() => _SetBalanceDialogState();
@@ -237,7 +394,11 @@ class _SetBalanceDialogState extends State<_SetBalanceDialog> {
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController();
+    _controller = TextEditingController(
+      text: widget.initialValue != null
+          ? widget.initialValue!.toStringAsFixed(2)
+          : '',
+    );
   }
 
   @override
@@ -254,7 +415,7 @@ class _SetBalanceDialogState extends State<_SetBalanceDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Set total balance'),
+    title: Text(widget.isEditing ? 'Edit total balance' : 'Set total balance'),
     content: TextField(
       controller: _controller,
       autofocus: true,
@@ -272,7 +433,7 @@ class _SetBalanceDialogState extends State<_SetBalanceDialog> {
       ),
       FilledButton(
         onPressed: _submit,
-        child: const Text('Set balance'),
+        child: Text(widget.isEditing ? 'Update balance' : 'Set balance'),
       ),
     ],
   );
@@ -286,6 +447,7 @@ class BalanceCard extends StatelessWidget {
     required this.income,
     required this.expenses,
     required this.onSetInitialBalance,
+    this.onEditBalance,
   });
 
   final double? initialBalance;
@@ -293,6 +455,7 @@ class BalanceCard extends StatelessWidget {
   final double income;
   final double expenses;
   final VoidCallback onSetInitialBalance;
+  final VoidCallback? onEditBalance;
 
   @override
   Widget build(BuildContext context) {
@@ -346,11 +509,47 @@ class BalanceCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          heading(
-            balance == null
-                ? 'Balance not set'
-                : currency.format(balance),
-            balance == null ? 24 : 31,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: heading(
+                  balance == null
+                      ? 'Balance not set'
+                      : currency.format(balance),
+                  balance == null ? 24 : 31,
+                ),
+              ),
+              if (initialBalance != null && onEditBalance != null)
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: onEditBalance,
+                    child: Container(
+                      padding: const EdgeInsets.all(7),
+                      decoration: BoxDecoration(
+                        color: AppColor.isDarkMode
+                            ? Colors.white.withValues(alpha: 0.08)
+                            : Colors.black.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: AppColor.border,
+                          width: 0.8,
+                        ),
+                      ),
+                      child: Tooltip(
+                        message: 'Edit balance',
+                        child: Icon(
+                          Icons.edit_rounded,
+                          size: 16,
+                          color: AppColor.mint,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 18),
 

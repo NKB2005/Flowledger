@@ -164,9 +164,10 @@ class WeeklyBudgetSection extends ConsumerWidget {
                   category: budget.category,
                   limit: budget.limit,
                 );
+                ScaffoldMessenger.of(context).hideCurrentSnackBar();
               },
             ),
-            duration: const Duration(seconds: 4),
+            duration: const Duration(seconds: 5),
           ),
         );
       }

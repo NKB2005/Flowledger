@@ -1,4 +1,5 @@
-import 'dart:async';
+﻿import 'dart:async';
+import 'dart:ui';
 import 'package:file_selector/file_selector.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -10,7 +11,11 @@ import '../core/bank_sms_parser.dart';
 import '../core/bank_sms_service.dart';
 import '../core/excel_service.dart';
 import '../core/expense_note_importer.dart';
+import '../core/merchant_category_store.dart';
+import '../models/app_transaction.dart';
+import '../models/categories.dart';
 import '../providers/providers.dart';
+import '../widgets/category_picker_sheet.dart';
 import '../widgets/glass_ui.dart';
 import '../widgets/standard_page.dart';
 
@@ -142,8 +147,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   Future<void> _loadSmsPreference() async {
-    final enabled =
-        await BankSmsService.isAutoSyncEnabled(userId: _effectiveUserId);
+    final enabled = await BankSmsService.isAutoSyncEnabled(
+      userId: _effectiveUserId,
+    );
     if (mounted) {
       setState(() => _smsSyncEnabled = enabled);
     }
@@ -205,8 +211,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               const SizedBox(height: 12),
               Container(
                 width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: AppColor.glassSurface.withValues(alpha: 0.6),
                   borderRadius: BorderRadius.circular(10),
@@ -308,62 +316,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         getRepo: () => ref.read(transactionRepositoryProvider),
         onAutoLogged: (parsed) {
           if (!mounted) return;
-          final type = parsed.isExpense ? 'Expense' : 'Income';
-          final symbol = parsed.isExpense ? '-' : '+';
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              behavior: SnackBarBehavior.floating,
-              margin: const EdgeInsets.fromLTRB(16, 0, 16, 92),
-              backgroundColor: AppColor.card,
-              elevation: 6,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: BorderSide(
-                  color: AppColor.mint.withValues(alpha: 0.5),
-                  width: 1.2,
-                ),
-              ),
-              content: Row(
-                children: [
-                  Icon(
-                    parsed.isExpense
-                        ? Icons.arrow_upward_rounded
-                        : Icons.arrow_downward_rounded,
-                    color: parsed.isExpense ? AppColor.coral : AppColor.mint,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Auto-logged $type from Bank SMS',
-                          style: TextStyle(
-                            color: AppColor.muted,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Text(
-                          '${parsed.note}  ·  $symbol₹${parsed.amount.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            color: AppColor.text,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              duration: const Duration(seconds: 4),
-            ),
-          );
+          _handleAutoLoggedSms(parsed);
         },
       );
 
@@ -373,7 +326,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             backgroundColor: AppColor.mint,
             content: const Text(
               'Real-time Bank SMS auto-tracking enabled!',
-              style: TextStyle(color: Colors.black, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                color: Colors.black,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         );
@@ -394,9 +350,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     if (_isScanningSms) return;
     final repo = ref.read(transactionRepositoryProvider);
     if (repo == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please log in first.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Please log in first.')));
       return;
     }
 
@@ -425,7 +381,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       if (parsedList.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('No bank transaction messages found in your recent SMS inbox.'),
+            content: Text(
+              'No bank transaction messages found in your recent SMS inbox.',
+            ),
           ),
         );
         return;
@@ -464,7 +422,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               backgroundColor: AppColor.mint,
               content: Text(
                 'Successfully imported $count transactions from bank SMS!',
-                style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           );
@@ -472,9 +433,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to scan SMS: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to scan SMS: $e')));
       }
     } finally {
       if (mounted) {
@@ -483,23 +444,570 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
+  Future<void> _handleAutoLoggedSms(ParsedBankSms parsed) async {
+    final type = parsed.isExpense ? 'Expense' : 'Income';
+    final symbol = parsed.isExpense ? '-' : '+';
+    final isConf = parsed.isConfident;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 92),
+        backgroundColor: AppColor.card,
+        elevation: 6,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: (isConf ? AppColor.mint : AppColor.coral).withValues(
+              alpha: 0.6,
+            ),
+            width: 1.2,
+          ),
+        ),
+        content: Row(
+          children: [
+            Icon(
+              isConf
+                  ? (parsed.isExpense
+                        ? Icons.arrow_upward_rounded
+                        : Icons.arrow_downward_rounded)
+                  : Icons.help_outline_rounded,
+              color: isConf
+                  ? (parsed.isExpense ? AppColor.coral : AppColor.mint)
+                  : Colors.amber,
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isConf
+                        ? 'Auto-logged $type · ${parsed.category}'
+                        : 'New $type detected · Category needed',
+                    style: TextStyle(
+                      color: isConf ? AppColor.muted : Colors.amber,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    '${parsed.note}  ·  $symbol₹${parsed.amount.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      color: AppColor.text,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: isConf ? 'Change' : 'Categorize',
+          textColor: AppColor.mint,
+          onPressed: () => _showCategoryPickerForSms(parsed),
+        ),
+        duration: Duration(seconds: isConf ? 5 : 9),
+      ),
+    );
+  }
+
+  Future<void> _showCategoryPickerForSms(ParsedBankSms parsed) async {
+    final chosen = await CategoryPickerSheet.show(
+      context: context,
+      merchant: parsed.note,
+      amount: parsed.amount,
+      isExpense: parsed.isExpense,
+      currentCategory: parsed.category,
+    );
+    if (chosen != null && mounted) {
+      await MerchantCategoryStore.learn(parsed.note, chosen);
+      final repo = ref.read(transactionRepositoryProvider);
+      final txId = parsed.transactionId;
+      if (repo != null && txId != null) {
+        await repo.update(
+          AppTransaction(
+            id: txId,
+            amount: parsed.amount,
+            isExpense: parsed.isExpense,
+            category: chosen,
+            note: parsed.note,
+            paymentMethod: parsed.paymentMethod,
+            date: parsed.date,
+          ),
+        );
+      }
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 92),
+            backgroundColor: AppColor.card,
+            elevation: 6,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: AppColor.mint.withValues(alpha: 0.5),
+                width: 1.2,
+              ),
+            ),
+            content: Row(
+              children: [
+                Icon(
+                  Icons.check_circle_rounded,
+                  color: AppColor.mint,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Saved as $chosen! FlowLedger will remember this for "${parsed.note}".',
+                    style: TextStyle(
+                      color: AppColor.text,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
+  void _showLearnedRulesDialog() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (modalCtx, setModalState) {
+          final rules = MerchantCategoryStore.customRules;
+          return ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+              child: Container(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(modalCtx).size.height * 0.75,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColor.card.withValues(alpha: 0.95),
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(28),
+                  ),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.12),
+                    width: 1.2,
+                  ),
+                ),
+                padding: EdgeInsets.fromLTRB(20, 12, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 44,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.25),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: AppColor.mint.withValues(alpha: 0.15),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.psychology_rounded,
+                            color: AppColor.mint,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Smart Merchant Memory',
+                                style: TextStyle(
+                                  color: AppColor.text,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              Text(
+                                '${rules.length} custom rules learned',
+                                style: TextStyle(
+                                  color: AppColor.muted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (rules.isNotEmpty)
+                          TextButton(
+                            onPressed: () async {
+                              await MerchantCategoryStore.clearAllCustomRules();
+                              setModalState(() {});
+                              if (mounted) setState(() {});
+                            },
+                            child: Text(
+                              'Clear All',
+                              style: TextStyle(
+                                color: AppColor.coral,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'When you confirm or set a category for a merchant, FlowLedger remembers it and auto-categorizes future SMS from them.',
+                      style: TextStyle(
+                        color: AppColor.muted,
+                        fontSize: 12,
+                        height: 1.3,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Expanded(
+                      child: rules.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.auto_awesome,
+                                    color: AppColor.muted.withValues(
+                                      alpha: 0.5,
+                                    ),
+                                    size: 40,
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    'No custom rules learned yet',
+                                    style: TextStyle(
+                                      color: AppColor.text,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'When you log or categorize bank transactions, FlowLedger will learn your preferences automatically.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: AppColor.muted,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemCount: rules.length,
+                              separatorBuilder: (_, _) => Divider(
+                                height: 1,
+                                color: Colors.white.withValues(alpha: 0.06),
+                              ),
+                              itemBuilder: (context, idx) {
+                                final merchant = rules.keys.elementAt(idx);
+                                final category = rules[merchant]!;
+                                return ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: Text(
+                                    merchant.toUpperCase(),
+                                    style: TextStyle(
+                                      color: AppColor.text,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: AppColor.mint.withValues(
+                                            alpha: 0.15,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          border: Border.all(
+                                            color: AppColor.mint.withValues(
+                                              alpha: 0.4,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          category,
+                                          style: TextStyle(
+                                            color: AppColor.mint,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      IconButton(
+                                        icon: Icon(
+                                          Icons.delete_outline,
+                                          color: AppColor.muted,
+                                          size: 18,
+                                        ),
+                                        onPressed: () async {
+                                          await MerchantCategoryStore.removeRule(
+                                            merchant,
+                                          );
+                                          setModalState(() {});
+                                          if (mounted) setState(() {});
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColor.mint,
+                        foregroundColor: Colors.black,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text(
+                        'Add Merchant Rule Manually',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      onPressed: () async {
+                        final added = await _showAddRuleDialog();
+                        if (added == true) {
+                          setModalState(() {});
+                          if (mounted) setState(() {});
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<bool?> _showAddRuleDialog() async {
+    final merchantCtrl = TextEditingController();
+    String selectedCategory = 'Food';
+    final allCats = {
+      ...expenseCategories.map((c) => c.name),
+      ...incomeCategories.map((c) => c.name),
+    }.toList();
+
+    try {
+      return await showDialog<bool>(
+        context: context,
+        builder: (dCtx) => StatefulBuilder(
+          builder: (dCtx, setDialogState) => AlertDialog(
+            scrollable: true,
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 24,
+            ),
+            backgroundColor: AppColor.card,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: Text(
+              'Add Merchant Rule',
+              style: TextStyle(
+                color: AppColor.text,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 360),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Merchant / Vendor Name',
+                    style: TextStyle(
+                      color: AppColor.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: merchantCtrl,
+                    textCapitalization: TextCapitalization.words,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => FocusScope.of(dCtx).unfocus(),
+                    style: TextStyle(color: AppColor.text),
+                    decoration: InputDecoration(
+                      hintText: 'e.g. Swiggy, Uber, Chai Point',
+                      hintStyle: TextStyle(color: AppColor.muted),
+                      filled: true,
+                      fillColor: AppColor.glassSurface,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Default Category',
+                    style: TextStyle(
+                      color: AppColor.muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: AppColor.glassSurface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.1),
+                      ),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: selectedCategory,
+                        isExpanded: true,
+                        isDense: true,
+                        menuMaxHeight: 280,
+                        borderRadius: BorderRadius.circular(14),
+                        elevation: 8,
+                        dropdownColor: AppColor.card,
+                        items: allCats.map((cat) {
+                          final category = categoryFor(cat);
+                          return DropdownMenuItem<String>(
+                            value: cat,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  category.icon,
+                                  color: category.color,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 10),
+                                Text(
+                                  cat,
+                                  style: TextStyle(color: AppColor.text),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setDialogState(() => selectedCategory = val);
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dCtx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final merchant = merchantCtrl.text.trim();
+                  if (merchant.isNotEmpty) {
+                    await MerchantCategoryStore.learn(
+                      merchant,
+                      selectedCategory,
+                    );
+                    if (dCtx.mounted) Navigator.pop(dCtx, true);
+                  }
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColor.mint,
+                  foregroundColor: Colors.black,
+                ),
+                child: const Text('Save Rule'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      merchantCtrl.dispose();
+    }
+  }
+
   void _showTestBankSmsDialog() {
     final presets = [
       {
         'label': 'Zomato Food (Debit ₹450)',
-        'text': 'Dear UPI user A/C 9876 debited by 450.0 on 24-Oct-26 to Zomato UPI Ref 410293. Avl Bal Rs 18,240.50',
+        'text':
+            'Dear UPI user A/C 9876 debited by 450.0 on 24-Oct-26 to Zomato UPI Ref 410293. Avl Bal Rs 18,240.50',
       },
       {
-        'label': 'Shell Fuel (Debit ₹1,200)',
-        'text': 'Your A/C ending 4321 has been debited by INR 1,200.00 on 24-Oct-26 at SHELL PETROL PUMP. Avl Bal INR 14,800.00',
+        'label': 'Swiggy Food (Debit ₹320)',
+        'text':
+            'Rs 320.00 debited from A/C XX9999 on 05-Nov-26 to Swiggy UPI ref 998877. Avl Bal Rs 12,500.00',
+      },
+      {
+        'label': 'Uber Ride (Debit ₹280)',
+        'text':
+            'A/C 1234 debited by INR 280.00 on 05-Nov-26 for Uber ride. Avl Bal INR 15,000.00',
       },
       {
         'label': 'Monthly Salary (Credit ₹65,000)',
-        'text': 'Your A/C 1234 is credited with INR 65,000.00 on 01-Nov-26 towards Salary. Clear Bal INR 85,200.00',
+        'text':
+            'Your A/C 1234 is credited with INR 65,000.00 on 01-Nov-26 towards Salary. Clear Bal INR 85,200.00',
       },
       {
-        'label': 'Amazon Refund (Credit ₹899)',
-        'text': 'Your A/C 5544 has been credited by Rs 899.00 on 25-Oct-26. Info: Amazon Refund. Avl Bal Rs 22,400.00',
+        'label': 'Friend Transfer (Credit ₹500)',
+        'text':
+            'Your A/C 1234 is credited with INR 500.00 on 05-Nov-26 by transfer from Rahul. Clear Bal INR 12,000.00',
+      },
+      {
+        'label': 'Corner Store (Debit ₹150)',
+        'text':
+            'Your A/C 1234 debited by Rs.150.00 on 05-Nov-26 to Corner Store. Avl Bal Rs 8,400.00',
       },
     ];
 
@@ -515,7 +1023,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           return Container(
             decoration: BoxDecoration(
               color: AppColor.card,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(28),
+              ),
               border: Border.all(
                 color: AppColor.border.withValues(alpha: 0.5),
                 width: 1.2,
@@ -545,7 +1055,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   const SizedBox(height: 16),
                   Row(
                     children: [
-                      Icon(Icons.science_outlined, color: AppColor.mint, size: 24),
+                      Icon(
+                        Icons.science_outlined,
+                        color: AppColor.mint,
+                        size: 24,
+                      ),
                       const SizedBox(width: 10),
                       Text(
                         'Bank SMS Simulator',
@@ -620,7 +1134,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(color: AppColor.mint, width: 1.5),
+                        borderSide: BorderSide(
+                          color: AppColor.mint,
+                          width: 1.5,
+                        ),
                       ),
                     ),
                     onChanged: (_) => setModalState(() {}),
@@ -630,12 +1147,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: (parsed.isExpense ? AppColor.coral : AppColor.mint)
-                            .withValues(alpha: 0.1),
+                        color:
+                            (parsed.isExpense ? AppColor.coral : AppColor.mint)
+                                .withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
-                          color: (parsed.isExpense ? AppColor.coral : AppColor.mint)
-                              .withValues(alpha: 0.4),
+                          color:
+                              (parsed.isExpense
+                                      ? AppColor.coral
+                                      : AppColor.mint)
+                                  .withValues(alpha: 0.4),
                         ),
                       ),
                       child: Column(
@@ -655,7 +1176,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
-                                  parsed.isExpense ? 'DEBIT (EXPENSE)' : 'CREDIT (INCOME)',
+                                  parsed.isExpense
+                                      ? 'DEBIT (EXPENSE)'
+                                      : 'CREDIT (INCOME)',
                                   style: const TextStyle(
                                     color: Colors.black,
                                     fontSize: 11,
@@ -695,9 +1218,90 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                   fontWeight: FontWeight.w700,
                                 ),
                               ),
-                              const SizedBox(width: 16),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color:
+                                      (MerchantCategoryStore.isLearned(
+                                        parsed.note,
+                                      )
+                                      ? AppColor.mint
+                                      : (parsed.isConfident
+                                            ? AppColor.mint.withValues(
+                                                alpha: 0.2,
+                                              )
+                                            : Colors.amber.withValues(
+                                                alpha: 0.2,
+                                              ))),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  MerchantCategoryStore.isLearned(parsed.note)
+                                      ? 'Learned Memory'
+                                      : (parsed.isConfident
+                                            ? 'Keyword'
+                                            : 'Needs Review'),
+                                  style: TextStyle(
+                                    color:
+                                        MerchantCategoryStore.isLearned(
+                                          parsed.note,
+                                        )
+                                        ? Colors.black
+                                        : (parsed.isConfident
+                                              ? AppColor.mint
+                                              : Colors.amber),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              const Spacer(),
+                              InkWell(
+                                onTap: () async {
+                                  final chosen = await CategoryPickerSheet.show(
+                                    context: ctx,
+                                    merchant: parsed.note,
+                                    amount: parsed.amount,
+                                    isExpense: parsed.isExpense,
+                                    currentCategory: parsed.category,
+                                  );
+                                  if (chosen != null) {
+                                    await MerchantCategoryStore.learn(
+                                      parsed.note,
+                                      chosen,
+                                    );
+                                    setModalState(() {});
+                                    if (mounted) setState(() {});
+                                  }
+                                },
+                                borderRadius: BorderRadius.circular(8),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  child: Text(
+                                    'Edit Rule',
+                                    style: TextStyle(
+                                      color: AppColor.mint,
+                                      fontSize: 11.5,
+                                      fontWeight: FontWeight.w700,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
                               Text(
-                                'Note: ',
+                                'Note / Merchant: ',
                                 style: TextStyle(
                                   color: AppColor.muted,
                                   fontSize: 12,
@@ -754,7 +1358,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           if (repo == null) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('Please log in to auto-log transactions.'),
+                                content: Text(
+                                  'Please log in to auto-log transactions.',
+                                ),
                               ),
                             );
                             return;
@@ -765,7 +1371,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 behavior: SnackBarBehavior.floating,
-                                margin: const EdgeInsets.fromLTRB(16, 0, 16, 92),
+                                margin: const EdgeInsets.fromLTRB(
+                                  16,
+                                  0,
+                                  16,
+                                  92,
+                                ),
                                 backgroundColor: AppColor.card,
                                 elevation: 6,
                                 shape: RoundedRectangleBorder(
@@ -790,7 +1401,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                     Expanded(
                                       child: Column(
                                         mainAxisSize: MainAxisSize.min,
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
                                           Text(
                                             'Simulated Bank SMS Logged!',
@@ -834,12 +1446,19 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.info_outline_rounded, color: AppColor.muted, size: 18),
+                          Icon(
+                            Icons.info_outline_rounded,
+                            color: AppColor.muted,
+                            size: 18,
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
                               'No bank debit/credit transaction detected in this text (or OTP/notification).',
-                              style: TextStyle(color: AppColor.muted, fontSize: 12),
+                              style: TextStyle(
+                                color: AppColor.muted,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                         ],
@@ -860,7 +1479,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       final repo = ref.read(transactionRepositoryProvider);
       if (repo == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please log in to export transactions.')),
+          const SnackBar(
+            content: Text('Please log in to export transactions.'),
+          ),
         );
         return;
       }
@@ -886,9 +1507,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     } catch (e) {
       if (mounted) {
         setState(() => _isExporting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Export failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Export failed: $e')));
       }
     }
   }
@@ -900,9 +1521,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         extensions: <String>['csv', 'xls', 'xlsx', 'txt'],
       );
 
-      final file = await openFile(
-        acceptedTypeGroups: <XTypeGroup>[typeGroup],
-      );
+      final file = await openFile(acceptedTypeGroups: <XTypeGroup>[typeGroup]);
 
       if (file == null) return;
 
@@ -970,7 +1589,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             backgroundColor: AppColor.mint,
             content: Text(
               'Successfully imported $count transactions!',
-              style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w700),
+              style: const TextStyle(
+                color: Colors.black,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
         );
@@ -978,9 +1600,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     } catch (e) {
       if (mounted) {
         setState(() => _isImporting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Import failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Import failed: $e')));
       }
     }
   }
@@ -1025,8 +1647,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             ),
             title: Text(
               AppColor.isDarkMode ? 'Dark mode' : 'Light mode',
-              style:
-                  TextStyle(color: AppColor.text, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                color: AppColor.text,
+                fontWeight: FontWeight.w700,
+              ),
             ),
             subtitle: Text(
               AppColor.isDarkMode
@@ -1048,8 +1672,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             collapsedTextColor: AppColor.text,
             title: Text(
               'Customization',
-              style:
-                  TextStyle(color: AppColor.text, fontWeight: FontWeight.w800),
+              style: TextStyle(
+                color: AppColor.text,
+                fontWeight: FontWeight.w800,
+              ),
             ),
             subtitle: Text(
               'Colors, dock glass, and page effects',
@@ -1085,7 +1711,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       palette.name,
                       style: TextStyle(
                         color: AppColor.paletteId == palette.id
-                            ? (AppColor.isDarkMode ? Colors.black : Colors.black87)
+                            ? (AppColor.isDarkMode
+                                  ? Colors.black
+                                  : Colors.black87)
                             : AppColor.text,
                         fontWeight: FontWeight.w700,
                       ),
@@ -1093,185 +1721,152 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   );
                 }).toList(),
               ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Dock blur',
-                    style: TextStyle(
-                      color: AppColor.text,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                Text(
-                  '${AppColor.dockBlur.round()} px',
-                  style: TextStyle(color: AppColor.muted, fontSize: 12),
-                ),
-              ],
-            ),
-            Slider(
-              value: AppColor.dockBlur,
-              min: 0,
-              max: 28,
-              divisions: 14,
-              activeColor: AppColor.mint,
-              onChanged: _setDockBlur,
-              onChangeEnd: (_) => unawaited(AppColor.saveAppearance()),
-            ),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Dock transparency',
-                    style: TextStyle(
-                      color: AppColor.text,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                Text(
-                  '${(AppColor.dockOpacity * 100).round()}%',
-                  style: TextStyle(color: AppColor.muted, fontSize: 12),
-                ),
-              ],
-            ),
-            Slider(
-              value: AppColor.dockOpacity,
-              min: 0,
-              max: 1,
-              divisions: 20,
-              activeColor: AppColor.mint,
-              onChanged: _setDockOpacity,
-              onChangeEnd: (_) => unawaited(AppColor.saveAppearance()),
-            ),
-            const SizedBox(height: 8),
-            GlassCard(
-              radius: 18,
-              surfaceColor: AppColor.dockSurface,
-              blurSigma: AppColor.dockBlur,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
+              const SizedBox(height: 20),
+              Row(
                 children: [
-                  Icon(Icons.home_outlined, color: AppColor.muted),
-                  Icon(Icons.list_alt_rounded, color: AppColor.muted),
-                  Icon(Icons.add_circle_rounded, color: AppColor.mint),
-                  Icon(Icons.insights_outlined, color: AppColor.muted),
+                  Expanded(
+                    child: Text(
+                      'Dock blur',
+                      style: TextStyle(
+                        color: AppColor.text,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${AppColor.dockBlur.round()} px',
+                    style: TextStyle(color: AppColor.muted, fontSize: 12),
+                  ),
                 ],
               ),
-            ),
-            const SizedBox(height: 12),
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              value: AppColor.showAmbientBackground,
-              onChanged: (value) {
-                setState(() => AppColor.showAmbientBackground = value);
-                AppColor.revision.value++;
-                unawaited(AppColor.saveAppearance());
-              },
-              activeThumbColor: AppColor.mint,
-              title: Text(
-                'Ambient background',
-                style: TextStyle(
-                  color: AppColor.text,
-                  fontWeight: FontWeight.w700,
-                ),
+              Slider(
+                value: AppColor.dockBlur,
+                min: 0,
+                max: 28,
+                divisions: 14,
+                activeColor: AppColor.mint,
+                onChanged: _setDockBlur,
+                onChangeEnd: (_) => unawaited(AppColor.saveAppearance()),
               ),
-              subtitle: Text(
-                'Show soft color lighting behind pages',
-                style: TextStyle(color: AppColor.muted, fontSize: 12),
-              ),
-            ),
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              value: AppColor.showDockLabels,
-              onChanged: (value) {
-                setState(() => AppColor.showDockLabels = value);
-                AppColor.revision.value++;
-                unawaited(AppColor.saveAppearance());
-              },
-              activeThumbColor: AppColor.mint,
-              title: Text(
-                'Dock labels',
-                style: TextStyle(
-                  color: AppColor.text,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              subtitle: Text(
-                'Show names under navigation icons',
-                style: TextStyle(color: AppColor.muted, fontSize: 12),
-              ),
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 12),
-      GlassCard(
-        radius: 20,
-        padding: EdgeInsets.zero,
-        child: Column(
-          children: [
-            SwitchListTile.adaptive(
-              value: _smsSyncEnabled,
-              onChanged: _toggleSmsSync,
-              activeThumbColor: AppColor.mint,
-              secondary: Icon(
-                Icons.mark_email_read_outlined,
-                color: AppColor.mint,
-              ),
-              title: Text(
-                'Bank SMS auto-tracking',
-                style: TextStyle(
-                  color: AppColor.text,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              subtitle: Text(
-                _smsSyncEnabled
-                    ? 'Active · Auto-logging to $_accountDisplayName'
-                    : 'Turned off · Tap to enable for $_accountDisplayName',
-                style: TextStyle(color: AppColor.muted, fontSize: 12),
-              ),
-            ),
-            Divider(
-              height: 1,
-              thickness: 1,
-              indent: 56,
-              color: AppColor.border.withValues(alpha: 0.3),
-            ),
-            ListTile(
-              leading: Icon(
-                Icons.history_toggle_off_rounded,
-                color: AppColor.mint,
-              ),
-              title: Text(
-                'Scan recent bank SMS',
-                style: TextStyle(
-                  color: AppColor.text,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              subtitle: Text(
-                'Scan your inbox for recent bank credits & debits and import them',
-                style: TextStyle(color: AppColor.muted, fontSize: 12),
-              ),
-              trailing: _isScanningSms
-                  ? SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(AppColor.mint),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Dock transparency',
+                      style: TextStyle(
+                        color: AppColor.text,
+                        fontWeight: FontWeight.w700,
                       ),
-                    )
-                  : Icon(Icons.chevron_right, color: AppColor.muted),
-              onTap: _isScanningSms ? null : _scanRecentBankSms,
-            ),
-            if (_canAccessTester) ...[
+                    ),
+                  ),
+                  Text(
+                    '${(AppColor.dockOpacity * 100).round()}%',
+                    style: TextStyle(color: AppColor.muted, fontSize: 12),
+                  ),
+                ],
+              ),
+              Slider(
+                value: AppColor.dockOpacity,
+                min: 0,
+                max: 1,
+                divisions: 20,
+                activeColor: AppColor.mint,
+                onChanged: _setDockOpacity,
+                onChangeEnd: (_) => unawaited(AppColor.saveAppearance()),
+              ),
+              const SizedBox(height: 8),
+              GlassCard(
+                radius: 18,
+                surfaceColor: AppColor.dockSurface,
+                blurSigma: AppColor.dockBlur,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    Icon(Icons.home_outlined, color: AppColor.muted),
+                    Icon(Icons.list_alt_rounded, color: AppColor.muted),
+                    Icon(Icons.add_circle_rounded, color: AppColor.mint),
+                    Icon(Icons.insights_outlined, color: AppColor.muted),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: AppColor.showAmbientBackground,
+                onChanged: (value) {
+                  setState(() => AppColor.showAmbientBackground = value);
+                  AppColor.revision.value++;
+                  unawaited(AppColor.saveAppearance());
+                },
+                activeThumbColor: AppColor.mint,
+                title: Text(
+                  'Ambient background',
+                  style: TextStyle(
+                    color: AppColor.text,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                subtitle: Text(
+                  'Show soft color lighting behind pages',
+                  style: TextStyle(color: AppColor.muted, fontSize: 12),
+                ),
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                value: AppColor.showDockLabels,
+                onChanged: (value) {
+                  setState(() => AppColor.showDockLabels = value);
+                  AppColor.revision.value++;
+                  unawaited(AppColor.saveAppearance());
+                },
+                activeThumbColor: AppColor.mint,
+                title: Text(
+                  'Dock labels',
+                  style: TextStyle(
+                    color: AppColor.text,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                subtitle: Text(
+                  'Show names under navigation icons',
+                  style: TextStyle(color: AppColor.muted, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        GlassCard(
+          radius: 20,
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: [
+              SwitchListTile.adaptive(
+                value: _smsSyncEnabled,
+                onChanged: _toggleSmsSync,
+                activeThumbColor: AppColor.mint,
+                secondary: Icon(
+                  Icons.mark_email_read_outlined,
+                  color: AppColor.mint,
+                ),
+                title: Text(
+                  'Bank SMS auto-tracking',
+                  style: TextStyle(
+                    color: AppColor.text,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                subtitle: Text(
+                  _smsSyncEnabled
+                      ? 'Active · Auto-logging to $_accountDisplayName'
+                      : 'Turned off · Tap to enable for $_accountDisplayName',
+                  style: TextStyle(color: AppColor.muted, fontSize: 12),
+                ),
+              ),
               Divider(
                 height: 1,
                 thickness: 1,
@@ -1279,190 +1874,253 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 color: AppColor.border.withValues(alpha: 0.3),
               ),
               ListTile(
-                leading: Icon(Icons.science_outlined, color: AppColor.mint),
+                leading: Icon(
+                  Icons.history_toggle_off_rounded,
+                  color: AppColor.mint,
+                ),
                 title: Text(
-                  'Bank SMS simulator / tester',
+                  'Scan recent bank SMS',
                   style: TextStyle(
                     color: AppColor.text,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
                 subtitle: Text(
-                  'Test SMS parsing or paste a sample bank message',
+                  'Scan your inbox for recent bank credits & debits and import them',
+                  style: TextStyle(color: AppColor.muted, fontSize: 12),
+                ),
+                trailing: _isScanningSms
+                    ? SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            AppColor.mint,
+                          ),
+                        ),
+                      )
+                    : Icon(Icons.chevron_right, color: AppColor.muted),
+                onTap: _isScanningSms ? null : _scanRecentBankSms,
+              ),
+              Divider(
+                height: 1,
+                thickness: 1,
+                indent: 56,
+                color: AppColor.border.withValues(alpha: 0.3),
+              ),
+              ListTile(
+                leading: Icon(Icons.psychology_outlined, color: AppColor.mint),
+                title: Text(
+                  'Smart merchant memory',
+                  style: TextStyle(
+                    color: AppColor.text,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                subtitle: Text(
+                  '${MerchantCategoryStore.customRules.length} learned rules · Auto-classifies SMS',
                   style: TextStyle(color: AppColor.muted, fontSize: 12),
                 ),
                 trailing: Icon(Icons.chevron_right, color: AppColor.muted),
-                onTap: _showTestBankSmsDialog,
+                onTap: _showLearnedRulesDialog,
               ),
-            ],
-          ],
-        ),
-      ),
-      const SizedBox(height: 12),
-      GlassCard(
-        radius: 20,
-        padding: EdgeInsets.zero,
-        child: Column(
-          children: [
-            ListTile(
-              leading: Icon(Icons.file_upload_outlined, color: AppColor.mint),
-              title: Text(
-                'Import from Excel / CSV',
-                style: TextStyle(
-                  color: AppColor.text,
-                  fontWeight: FontWeight.w700,
+              if (_canAccessTester) ...[
+                Divider(
+                  height: 1,
+                  thickness: 1,
+                  indent: 56,
+                  color: AppColor.border.withValues(alpha: 0.3),
                 ),
-              ),
-              subtitle: Text(
-                'Import .xlsx, .xls, or .csv from Excel or other apps',
-                style: TextStyle(color: AppColor.muted, fontSize: 12),
-              ),
-              trailing: _isImporting
-                  ? SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(AppColor.mint),
-                      ),
-                    )
-                  : Icon(Icons.chevron_right, color: AppColor.muted),
-              onTap: _isImporting || _isExporting ? null : _importExpenseNote,
-            ),
-            Divider(
-              height: 1,
-              thickness: 1,
-              indent: 56,
-              color: AppColor.border.withValues(alpha: 0.3),
-            ),
-            ListTile(
-              leading: Icon(Icons.table_chart_outlined, color: AppColor.mint),
-              title: Text(
-                'Export to Excel (.xlsx)',
-                style: TextStyle(
-                  color: AppColor.text,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              subtitle: Text(
-                'Share or download your expenses as an Excel workbook',
-                style: TextStyle(color: AppColor.muted, fontSize: 12),
-              ),
-              trailing: _isExporting
-                  ? SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(AppColor.mint),
-                      ),
-                    )
-                  : Icon(Icons.chevron_right, color: AppColor.muted),
-              onTap: _isImporting || _isExporting ? null : _exportExcel,
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 12),
-      GlassCard(
-        radius: 20,
-        padding: EdgeInsets.zero,
-        child: ListTile(
-          leading: Icon(Icons.info_outline_rounded, color: AppColor.violet),
-          title: Text(
-            'About FlowLedger',
-            style: TextStyle(color: AppColor.text, fontWeight: FontWeight.w700),
-          ),
-          subtitle: Text(
-            'Version 1.0.0',
-            style: TextStyle(color: AppColor.muted, fontSize: 12),
-          ),
-          trailing: Icon(Icons.chevron_right, color: AppColor.muted),
-          onTap: () => showAboutDialog(
-            context: context,
-            applicationName: 'FlowLedger',
-            applicationVersion: '1.0.0',
-            applicationLegalese: 'A calmer way to understand your spending.',
-          ),
-        ),
-      ),
-      const SizedBox(height: 12),
-      GlassCard(
-        radius: 20,
-        padding: EdgeInsets.zero,
-        child: ListTile(
-          leading: Icon(Icons.logout_rounded, color: AppColor.coral),
-          title: Text(
-            'Log out',
-            style: TextStyle(
-              color: AppColor.coral,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          onTap: () async {
-            final shouldLogOut = await showDialog<bool>(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: const Text('Log out?'),
-                content: const Text('You can sign back in anytime.'),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text('Cancel'),
-                  ),
-                  FilledButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColor.coral,
-                      foregroundColor: Colors.white,
+                ListTile(
+                  leading: Icon(Icons.science_outlined, color: AppColor.mint),
+                  title: Text(
+                    'Bank SMS simulator / tester',
+                    style: TextStyle(
+                      color: AppColor.text,
+                      fontWeight: FontWeight.w700,
                     ),
-                    child: const Text('Log out'),
                   ),
-                ],
-              ),
-            );
-            if (shouldLogOut == true) await widget.onLogOut?.call();
-          },
+                  subtitle: Text(
+                    'Test SMS parsing or paste a sample bank message',
+                    style: TextStyle(color: AppColor.muted, fontSize: 12),
+                  ),
+                  trailing: Icon(Icons.chevron_right, color: AppColor.muted),
+                  onTap: _showTestBankSmsDialog,
+                ),
+              ],
+            ],
+          ),
         ),
-      ),
-      const SizedBox(height: 24),
-      GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _onDevHeaderTap,
-        child: Center(
+        const SizedBox(height: 12),
+        GlassCard(
+          radius: 20,
+          padding: EdgeInsets.zero,
           child: Column(
             children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: Image.asset(
-                  'assets/logo/app_logo_full.png',
-                  width: 36,
-                  height: 36,
-                  fit: BoxFit.cover,
+              ListTile(
+                leading: Icon(Icons.file_upload_outlined, color: AppColor.mint),
+                title: Text(
+                  'Import from Excel / CSV',
+                  style: TextStyle(
+                    color: AppColor.text,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
+                subtitle: Text(
+                  'Import .xlsx, .xls, or .csv from Excel or other apps',
+                  style: TextStyle(color: AppColor.muted, fontSize: 12),
+                ),
+                trailing: _isImporting
+                    ? SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            AppColor.mint,
+                          ),
+                        ),
+                      )
+                    : Icon(Icons.chevron_right, color: AppColor.muted),
+                onTap: _isImporting || _isExporting ? null : _importExpenseNote,
               ),
-              const SizedBox(height: 8),
-              Text(
-                'FlowLedger',
-                style: TextStyle(
-                  color: AppColor.text,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.2,
-                ),
+              Divider(
+                height: 1,
+                thickness: 1,
+                indent: 56,
+                color: AppColor.border.withValues(alpha: 0.3),
               ),
-              const SizedBox(height: 2),
-              Text(
-                'Version 1.0.0 • A calmer way to understand your money',
-                style: TextStyle(
-                  color: AppColor.muted,
-                  fontSize: 11,
+              ListTile(
+                leading: Icon(Icons.table_chart_outlined, color: AppColor.mint),
+                title: Text(
+                  'Export to Excel (.xlsx)',
+                  style: TextStyle(
+                    color: AppColor.text,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
+                subtitle: Text(
+                  'Share or download your expenses as an Excel workbook',
+                  style: TextStyle(color: AppColor.muted, fontSize: 12),
+                ),
+                trailing: _isExporting
+                    ? SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            AppColor.mint,
+                          ),
+                        ),
+                      )
+                    : Icon(Icons.chevron_right, color: AppColor.muted),
+                onTap: _isImporting || _isExporting ? null : _exportExcel,
               ),
             ],
           ),
         ),
-      ),
+        const SizedBox(height: 12),
+        GlassCard(
+          radius: 20,
+          padding: EdgeInsets.zero,
+          child: ListTile(
+            leading: Icon(Icons.info_outline_rounded, color: AppColor.violet),
+            title: Text(
+              'About FlowLedger',
+              style: TextStyle(
+                color: AppColor.text,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            subtitle: Text(
+              'Version 1.1.0',
+              style: TextStyle(color: AppColor.muted, fontSize: 12),
+            ),
+            trailing: Icon(Icons.chevron_right, color: AppColor.muted),
+            onTap: () => showAboutDialog(
+              context: context,
+              applicationName: 'FlowLedger',
+              applicationVersion: '1.1.0',
+              applicationLegalese: 'A calmer way to understand your spending.',
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        GlassCard(
+          radius: 20,
+          padding: EdgeInsets.zero,
+          child: ListTile(
+            leading: Icon(Icons.logout_rounded, color: AppColor.coral),
+            title: Text(
+              'Log out',
+              style: TextStyle(
+                color: AppColor.coral,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            onTap: () async {
+              final shouldLogOut = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Log out?'),
+                  content: const Text('You can sign back in anytime.'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppColor.coral,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('Log out'),
+                    ),
+                  ],
+                ),
+              );
+              if (shouldLogOut == true) await widget.onLogOut?.call();
+            },
+          ),
+        ),
+        const SizedBox(height: 24),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _onDevHeaderTap,
+          child: Center(
+            child: Column(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.asset(
+                    'assets/logo/app_logo_full.png',
+                    width: 36,
+                    height: 36,
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'FlowLedger',
+                  style: TextStyle(
+                    color: AppColor.text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Version 1.1.0 • A calmer way to understand your money',
+                  style: TextStyle(color: AppColor.muted, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ),
         const SizedBox(height: 16),
       ],
     ),

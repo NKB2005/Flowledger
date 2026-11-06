@@ -23,9 +23,41 @@ class SmsReceiver : BroadcastReceiver() {
                 timestamp = sms.timestampMillis
             }
 
-            if (fullBody.isNotEmpty()) {
-                onSmsReceived?.invoke(sender, fullBody.toString(), timestamp)
+            val body = fullBody.toString()
+            if (body.isNotEmpty()) {
+                if (onSmsReceived != null) {
+                    onSmsReceived?.invoke(sender, body, timestamp)
+                } else if (context != null) {
+                    // App is not active in foreground, detect payment SMS and notify user
+                    parseAndNotifyBackground(context, body)
+                }
             }
         }
+    }
+
+    private fun parseAndNotifyBackground(context: Context, body: String) {
+        val lower = body.lowercase()
+        val isDebit = lower.contains("debited") || lower.contains("spent") || lower.contains("paid") || lower.contains("sent rs")
+        val isCredit = lower.contains("credited") || lower.contains("received")
+
+        if (!isDebit && !isCredit) return
+
+        val amountRegex = Regex("""(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)""", RegexOption.IGNORE_CASE)
+        val match = amountRegex.find(body) ?: return
+        val rawAmount = match.groupValues[1].replace(",", "")
+        val amount = rawAmount.toDoubleOrNull() ?: return
+        if (amount <= 0) return
+
+        val merchantRegex = Regex("""(?:at|to|info)\s+([A-Za-z0-9\s\-]+?)(?:\s+(?:on|ref|upi|avl|bal|using|\.|\,)|$)""", RegexOption.IGNORE_CASE)
+        val merchantMatch = merchantRegex.find(body)
+        val merchant = merchantMatch?.groupValues?.get(1)?.trim() ?: ""
+
+        NotificationHelper.showPaymentNotification(
+            context = context,
+            amount = amount,
+            merchant = merchant,
+            category = "Other",
+            isExpense = !isCredit
+        )
     }
 }

@@ -217,44 +217,68 @@ class StandardPage extends StatelessWidget {
   final bool showDateBadge;
 
   @override
-  Widget build(BuildContext context) => LiquidBackground(
-    child: CustomScrollView(
-      slivers: [
-        SliverAppBar(
-          pinned: true,
-          floating: false,
-          snap: false,
-          elevation: 0,
-          backgroundColor: Colors.transparent,
-          surfaceTintColor: Colors.transparent,
-          scrolledUnderElevation: 0,
-          forceMaterialTransparency: true,
-          automaticallyImplyLeading: false,
-          toolbarHeight: 68,
-          titleSpacing: 0,
-          title: AppHeader(
-            title: title,
-            subtitle: subtitle,
-            badgeText: badgeText,
-            badgeSubtext: badgeSubtext,
-            showDateBadge: showDateBadge,
-            leading: showBackButton
-                ? IconButton(
-                    onPressed: onBack ?? () => Navigator.maybePop(context),
-                    icon: Icon(Icons.arrow_back_rounded, color: AppColor.text),
-                    tooltip: 'Back',
-                  )
-                : null,
-            trailing: trailing,
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return LiquidBackground(
+      child: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            pinned: true,
+            floating: false,
+            snap: false,
+            elevation: 0,
+            backgroundColor: isDark
+                ? const Color(0xFF090E1C).withValues(alpha: 0.75)
+                : const Color(0xFFF0F3F8).withValues(alpha: 0.82),
+            surfaceTintColor: Colors.transparent,
+            scrolledUnderElevation: 0,
+            forceMaterialTransparency: false,
+            automaticallyImplyLeading: false,
+            toolbarHeight: 68,
+            titleSpacing: 0,
+            flexibleSpace: ClipRect(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                child: Container(
+                  color: isDark
+                      ? const Color(0xFF090E1C).withValues(alpha: 0.72)
+                      : const Color(0xFFF0F3F8).withValues(alpha: 0.80),
+                ),
+              ),
+            ),
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(1),
+              child: Container(
+                height: 1,
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.08)
+                    : Colors.black.withValues(alpha: 0.06),
+              ),
+            ),
+            title: AppHeader(
+              title: title,
+              subtitle: subtitle,
+              badgeText: badgeText,
+              badgeSubtext: badgeSubtext,
+              showDateBadge: showDateBadge,
+              leading: showBackButton
+                  ? IconButton(
+                      onPressed: onBack ?? () => Navigator.maybePop(context),
+                      icon: Icon(Icons.arrow_back_rounded, color: AppColor.text),
+                      tooltip: 'Back',
+                    )
+                  : null,
+              trailing: trailing,
+            ),
           ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(20, 14, 20, 150),
-          sliver: SliverList(
-            delegate: SliverChildListDelegate(children),
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 150),
+            sliver: SliverList(
+              delegate: SliverChildListDelegate(children),
+            ),
           ),
-        ),
-      ],
-    ),
-  );
+        ],
+      ),
+    );
+  }
 }

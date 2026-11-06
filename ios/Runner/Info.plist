@@ -45,5 +45,20 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.416120557559-pk4bnir3kq2fous9tbid87ep1ofnls5r</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>FlowLedger needs access to your photo library to choose a profile photo.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>FlowLedger needs access to your camera to capture a profile photo.</string>
 </dict>
 </plist>

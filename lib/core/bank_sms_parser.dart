@@ -1,4 +1,5 @@
 import '../models/app_transaction.dart';
+import 'merchant_category_store.dart';
 
 class ParsedBankSms {
   final double amount;
@@ -11,6 +12,8 @@ class ParsedBankSms {
   final double? availableBalance;
   final String rawMessage;
   final String sender;
+  final bool isConfident;
+  final String? transactionId;
 
   const ParsedBankSms({
     required this.amount,
@@ -23,10 +26,45 @@ class ParsedBankSms {
     this.availableBalance,
     required this.rawMessage,
     required this.sender,
+    this.isConfident = true,
+    this.transactionId,
   });
 
-  AppTransaction toAppTransaction() {
+  String get merchant => note;
+
+  ParsedBankSms copyWith({
+    double? amount,
+    bool? isExpense,
+    String? category,
+    String? note,
+    String? paymentMethod,
+    DateTime? date,
+    String? accountDigits,
+    double? availableBalance,
+    String? rawMessage,
+    String? sender,
+    bool? isConfident,
+    String? transactionId,
+  }) {
+    return ParsedBankSms(
+      amount: amount ?? this.amount,
+      isExpense: isExpense ?? this.isExpense,
+      category: category ?? this.category,
+      note: note ?? this.note,
+      paymentMethod: paymentMethod ?? this.paymentMethod,
+      date: date ?? this.date,
+      accountDigits: accountDigits ?? this.accountDigits,
+      availableBalance: availableBalance ?? this.availableBalance,
+      rawMessage: rawMessage ?? this.rawMessage,
+      sender: sender ?? this.sender,
+      isConfident: isConfident ?? this.isConfident,
+      transactionId: transactionId ?? this.transactionId,
+    );
+  }
+
+  AppTransaction toAppTransaction({String? id}) {
     return AppTransaction(
+      id: id ?? transactionId ?? '',
       amount: amount,
       isExpense: isExpense,
       category: category,
@@ -82,10 +120,23 @@ class BankSmsParser {
     if (_isNonTransactionMessage(lower)) return null;
 
     // Detect Transaction Type (Debit = Expense, Credit = Income)
-    final isDebit = _isDebit(lower);
-    final isCredit = _isCredit(lower);
+    final rawIsDebit = _isDebit(lower);
+    final rawIsCredit = _isCredit(lower);
 
-    if (!isDebit && !isCredit) return null;
+    if (!rawIsDebit && !rawIsCredit) return null;
+
+    // Resolve transaction direction:
+    // "debited ... credited to [merchant]" is an expense (debit)
+    final bool isDebit;
+    if (rawIsDebit && rawIsCredit) {
+      if (lower.contains('credited to your') || lower.contains('deposited in your') || lower.contains('received in your')) {
+        isDebit = false;
+      } else {
+        isDebit = true;
+      }
+    } else {
+      isDebit = rawIsDebit;
+    }
 
     // Extract Transaction Amount
     final amount = _extractAmount(message);
@@ -103,8 +154,29 @@ class BankSmsParser {
     // Detect Payment Method
     final paymentMethod = _detectPaymentMethod(lower, sender, accountDigits);
 
-    // Detect Category
-    final category = isDebit ? _detectCategory(merchant, lower) : 'Salary';
+    // Detect Category with Smart Learning Store & Keywords
+    final learnedCat = MerchantCategoryStore.getCategory(merchant);
+    final String category;
+    final bool isConfident;
+
+    if (learnedCat != null) {
+      if (isDebit && learnedCat == 'Salary') {
+        category = 'Other';
+        isConfident = false;
+      } else {
+        category = learnedCat;
+        isConfident = true;
+      }
+    } else if (isDebit) {
+      final detected = _detectCategory(merchant, lower);
+      final nonSalary = detected == 'Salary' ? 'Other' : detected;
+      category = nonSalary;
+      isConfident = nonSalary != 'Other';
+    } else {
+      final detected = _detectIncomeCategory(lower, merchant);
+      category = detected;
+      isConfident = detected != 'Other';
+    }
 
     return ParsedBankSms(
       amount: amount,
@@ -117,6 +189,7 @@ class BankSmsParser {
       availableBalance: avlBalance,
       rawMessage: message,
       sender: sender,
+      isConfident: isConfident,
     );
   }
 
@@ -130,24 +203,44 @@ class BankSmsParser {
   }
 
   static bool _isDebit(String lower) {
-    return lower.contains('debited') ||
-        lower.contains('spent') ||
-        lower.contains('paid') ||
-        lower.contains('withdrawn') ||
-        lower.contains('deducted') ||
-        lower.contains('sent to') ||
-        lower.contains('transferred to') ||
-        lower.contains('purchase of');
+    if (lower.contains('debited') || lower.contains('debit')) return true;
+    if (lower.contains('dr.') || lower.contains('dr ') || lower.contains('dr:') || lower.contains('a/c dr')) return true;
+    if (lower.contains('spent') || lower.contains('paid') || lower.contains('payment of') || lower.contains('payment to') || lower.contains('payment towards')) return true;
+    if (lower.contains('withdrawn') || lower.contains('withdrawal') || lower.contains('deducted') || lower.contains('deduction')) return true;
+    if (lower.contains('sent to') || lower.contains('sent rs') || lower.contains('sent inr') || lower.contains('sent ₹')) return true;
+    if (lower.contains('transferred to') || lower.contains('transfer to') || lower.contains('transfer of') || lower.contains('trf to')) return true;
+    if (lower.contains('purchase of') || lower.contains('purchase at') || lower.contains('purchased at') || lower.contains('charged to') || lower.contains('charged')) return true;
+    if (lower.contains('auto-debit') || lower.contains('auto debit')) return true;
+    return false;
   }
 
   static bool _isCredit(String lower) {
     return lower.contains('credited') ||
-        lower.contains('received') ||
+        lower.contains('credited with') ||
+        lower.contains('credited to your') ||
+        lower.contains('received rs') ||
+        lower.contains('received inr') ||
+        lower.contains('received ₹') ||
+        lower.contains('received from') ||
         lower.contains('deposited') ||
         lower.contains('refunded') ||
-        lower.contains('added to') ||
+        lower.contains('added to your') ||
         lower.contains('salary credited') ||
         lower.contains('cashback');
+  }
+
+  static String _detectIncomeCategory(String text, String merchant) {
+    final lower = '$text $merchant'.toLowerCase();
+    if (lower.contains('salary') || lower.contains('payroll') || lower.contains('stipend') || lower.contains('wages')) {
+      return 'Salary';
+    }
+    if (lower.contains('freelance') || lower.contains('client') || lower.contains('project') || lower.contains('consulting')) {
+      return 'Freelance';
+    }
+    if (lower.contains('cashback') || lower.contains('reward') || lower.contains('gift') || lower.contains('bonus')) {
+      return 'Gift';
+    }
+    return 'Other';
   }
 
   static double? _extractAmount(String text) {
@@ -205,9 +298,18 @@ class BankSmsParser {
       return 'Incoming Transfer';
     }
 
-    final match = _merchantPattern.firstMatch(text);
-    if (match != null) {
+    final matches = _merchantPattern.allMatches(text);
+    for (final match in matches) {
       String m = match.group(1)!.trim();
+      // Skip if match is an amount like "Rs.55.00" or digits
+      if (m.startsWith(RegExp(r'(?:Rs\.?|INR|₹|\d)', caseSensitive: false))) {
+        continue;
+      }
+      if (m.toLowerCase().startsWith('account of ')) {
+        m = m.substring(11).trim();
+      } else if (m.toLowerCase().startsWith('a/c of ')) {
+        m = m.substring(7).trim();
+      }
       // Remove trailing words like 'on', 'via', 'ref'
       m = m.replaceAll(RegExp(r'\s+(?:on|via|ref|upi|avl|bal)$', caseSensitive: false), '').trim();
       if (m.isNotEmpty && m.length > 1) {
@@ -249,6 +351,12 @@ class BankSmsParser {
         m.contains('cafe') ||
         m.contains('coffee') ||
         m.contains('tea') ||
+        m.contains('chai') ||
+        m.contains('dhaba') ||
+        m.contains('canteen') ||
+        m.contains('snack') ||
+        m.contains('sweets') ||
+        m.contains('juice') ||
         m.contains('restaurant') ||
         m.contains('hotel') ||
         m.contains('bakery') ||

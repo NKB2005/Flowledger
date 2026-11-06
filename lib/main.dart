@@ -3,13 +3,17 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/app_colors.dart';
 import 'core/auth_service.dart';
+import 'core/bank_sms_parser.dart';
 import 'core/bank_sms_service.dart';
 import 'core/expense_store.dart';
+import 'core/merchant_category_store.dart';
 import 'core/profile_image_store.dart';
 import 'data/transaction_repository.dart';
+import 'models/app_transaction.dart';
 import 'pages/auth_page.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/insights_page.dart';
@@ -18,6 +22,7 @@ import 'pages/settings_page.dart';
 import 'pages/splash_screen.dart';
 import 'screens/add_transaction_screen.dart';
 import 'screens/transactions_screen.dart';
+import 'widgets/category_picker_sheet.dart';
 import 'widgets/glass_dock.dart';
 import 'widgets/glass_ui.dart';
 
@@ -26,15 +31,37 @@ Future<void> main() async {
   var firebaseReady = false;
   try {
     await Firebase.initializeApp();
+    FirebaseFirestore.instance.settings = const Settings(
+      persistenceEnabled: true,
+      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+    );
     firebaseReady = true;
   } catch (_) {}
   await AuthService.initializeGoogleSignIn();
   await AppColor.loadAppearance();
-  runApp(ProviderScope(child: ExpenseTrackerApp(firebaseReady: firebaseReady, showInitialSplash: true)));
+  await MerchantCategoryStore.init();
+  try {
+    final curUser = FirebaseAuth.instance.currentUser;
+    if (curUser != null) {
+      await TransactionRepository.preload(curUser.uid);
+    }
+  } catch (_) {}
+  runApp(
+    ProviderScope(
+      child: ExpenseTrackerApp(
+        firebaseReady: firebaseReady,
+        showInitialSplash: true,
+      ),
+    ),
+  );
 }
 
 class ExpenseTrackerApp extends StatefulWidget {
-  const ExpenseTrackerApp({super.key, this.firebaseReady, this.showInitialSplash = false});
+  const ExpenseTrackerApp({
+    super.key,
+    this.firebaseReady,
+    this.showInitialSplash = false,
+  });
 
   final bool? firebaseReady;
   final bool showInitialSplash;
@@ -142,10 +169,8 @@ class _ExpenseTrackerAppState extends State<ExpenseTrackerApp> {
         duration: const Duration(milliseconds: 650),
         switchInCurve: Curves.easeOutCubic,
         switchOutCurve: Curves.easeInCubic,
-        transitionBuilder: (child, animation) => FadeTransition(
-          opacity: animation,
-          child: child,
-        ),
+        transitionBuilder: (child, animation) =>
+            FadeTransition(opacity: animation, child: child),
         child: _showSplash
             ? FlowLedgerSplashScreen(
                 key: const ValueKey('splash'),
@@ -156,17 +181,17 @@ class _ExpenseTrackerAppState extends State<ExpenseTrackerApp> {
                 },
               )
             : (widget.firebaseReady == null
-                ? ExpenseTrackerShell(
-                    key: const ValueKey('shell'),
-                    isDarkMode: AppColor.isDarkMode,
-                    onThemeChanged: _setTheme,
-                  )
-                : AuthGate(
-                    key: const ValueKey('authGate'),
-                    firebaseReady: widget.firebaseReady!,
-                    isDarkMode: AppColor.isDarkMode,
-                    onThemeChanged: _setTheme,
-                  )),
+                  ? ExpenseTrackerShell(
+                      key: const ValueKey('shell'),
+                      isDarkMode: AppColor.isDarkMode,
+                      onThemeChanged: _setTheme,
+                    )
+                  : AuthGate(
+                      key: const ValueKey('authGate'),
+                      firebaseReady: widget.firebaseReady!,
+                      isDarkMode: AppColor.isDarkMode,
+                      onThemeChanged: _setTheme,
+                    )),
       ),
     ),
   );
@@ -234,9 +259,7 @@ class _AuthGateState extends State<AuthGate> {
     if (_isLoading) {
       return Scaffold(
         backgroundColor: AppColor.bg,
-        body: Center(
-          child: CircularProgressIndicator(color: AppColor.mint),
-        ),
+        body: Center(child: CircularProgressIndicator(color: AppColor.mint)),
       );
     }
 
@@ -248,10 +271,8 @@ class _AuthGateState extends State<AuthGate> {
       duration: const Duration(milliseconds: 650),
       switchInCurve: Curves.easeOutCubic,
       switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: child,
-      ),
+      transitionBuilder: (child, animation) =>
+          FadeTransition(opacity: animation, child: child),
       child: _showPostAuthSplash
           ? FlowLedgerSplashScreen(
               key: const ValueKey('postAuthSplash'),
@@ -289,50 +310,48 @@ class _ExpenseTrackerShellState extends State<ExpenseTrackerShell> {
   final ValueNotifier<int> _selectedTabNotifier = ValueNotifier<int>(0);
   late final PageController _pageController = PageController(initialPage: 0);
   late final _store = ExpenseStore(userId: widget.userId);
+  late List<Widget> _pages;
 
-  List<Widget> _buildPages() => [
-    _KeepAliveTab(
-      key: const ValueKey('tab_dashboard'),
-      child: DashboardPage(
-        store: _store,
-        onSeeAll: () => _selectPage(1),
+  void _initPages() {
+    _pages = [
+      _KeepAliveTab(
+        key: const ValueKey('tab_dashboard'),
+        child: DashboardPage(store: _store, onSeeAll: () => _selectPage(1)),
       ),
-    ),
-    _KeepAliveTab(
-      key: const ValueKey('tab_transactions'),
-      child: TransactionsScreen(onAdd: () => _selectPage(2)),
-    ),
-    _KeepAliveTab(
-      key: const ValueKey('tab_add'),
-      child: AddTransactionScreen(onSaved: () => _selectPage(1)),
-    ),
-    _KeepAliveTab(
-      key: const ValueKey('tab_insights'),
-      child: const InsightsPage(),
-    ),
-    _KeepAliveTab(
-      key: const ValueKey('tab_settings'),
-      child: SettingsPage(
-        userId: widget.userId,
-        isDarkMode: AppColor.isDarkMode,
-        onThemeChanged: widget.onThemeChanged,
-        onLogOut: () {
-          BankSmsService.stopListening();
-          return AuthService().signOut();
-        },
+      _KeepAliveTab(
+        key: const ValueKey('tab_transactions'),
+        child: TransactionsScreen(onAdd: () => _selectPage(2)),
       ),
-    ),
-  ];
+      _KeepAliveTab(
+        key: const ValueKey('tab_add'),
+        child: AddTransactionScreen(onSaved: () => _selectPage(1)),
+      ),
+      _KeepAliveTab(
+        key: const ValueKey('tab_insights'),
+        child: const InsightsPage(),
+      ),
+      _KeepAliveTab(
+        key: const ValueKey('tab_settings'),
+        child: SettingsPage(
+          userId: widget.userId,
+          isDarkMode: AppColor.isDarkMode,
+          onThemeChanged: widget.onThemeChanged,
+          onLogOut: () {
+            BankSmsService.stopListening();
+            return AuthService().signOut();
+          },
+        ),
+      ),
+    ];
+  }
 
   void _selectPage(int index) {
+    FocusManager.instance.primaryFocus?.unfocus();
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     if (index == _selectedTabNotifier.value) return;
     _selectedTabNotifier.value = index;
     if (_pageController.hasClients) {
-      _pageController.animateToPage(
-        index,
-        duration: const Duration(milliseconds: 280),
-        curve: Curves.easeOutCubic,
-      );
+      _pageController.jumpToPage(index);
     }
   }
 
@@ -340,27 +359,32 @@ class _ExpenseTrackerShellState extends State<ExpenseTrackerShell> {
   void initState() {
     super.initState();
     LiquidBackground.hasShellBackground = true;
+    _initPages();
     _store.load();
     ProfileImageStore.load(userId: widget.userId);
+    MerchantCategoryStore.init();
+    TransactionRepository.preload(widget.userId);
     _initSmsSync();
   }
 
   @override
   void didUpdateWidget(covariant ExpenseTrackerShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.userId != widget.userId) {
+    if (oldWidget.userId != widget.userId ||
+        oldWidget.isDarkMode != widget.isDarkMode) {
+      _initPages();
       _store.load();
       ProfileImageStore.load(userId: widget.userId);
+      TransactionRepository.preload(widget.userId);
       _initSmsSync();
-      setState(() {});
-    } else if (oldWidget.isDarkMode != widget.isDarkMode) {
       setState(() {});
     }
   }
 
   Future<void> _initSmsSync() async {
-    final enabled =
-        await BankSmsService.isAutoSyncEnabled(userId: widget.userId);
+    final enabled = await BankSmsService.isAutoSyncEnabled(
+      userId: widget.userId,
+    );
     if (!enabled || !mounted) {
       BankSmsService.stopListening();
       return;
@@ -377,8 +401,157 @@ class _ExpenseTrackerShellState extends State<ExpenseTrackerShell> {
           widget.userId == null ? null : TransactionRepository(widget.userId!),
       onAutoLogged: (parsed) {
         if (!mounted) return;
-        final type = parsed.isExpense ? 'Expense' : 'Income';
-        final symbol = parsed.isExpense ? '-' : '+';
+        _handleAutoLogged(parsed);
+      },
+    );
+
+    BankSmsService.setMethodCallHandler((call) async {
+      if (call.method == 'onCategorizePaymentIntent') {
+        final args = call.arguments;
+        if (args is Map && mounted) {
+          _handleCategorizeFromIntent(Map<String, dynamic>.from(args));
+        }
+      }
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkPendingNotificationIntent();
+    });
+  }
+
+  Future<void> _checkPendingNotificationIntent() async {
+    final pending = await BankSmsService.getPendingCategorizeTransaction();
+    if (pending != null && mounted) {
+      _handleCategorizeFromIntent(pending);
+    }
+  }
+
+  Future<void> _handleCategorizeFromIntent(Map<String, dynamic> data) async {
+    final amount = (data['amount'] as num?)?.toDouble() ?? 0.0;
+    final merchant = data['merchant']?.toString() ?? '';
+    final category = data['category']?.toString() ?? 'Other';
+    final isExpense = data['isExpense'] == true;
+    final transactionId = data['transactionId']?.toString();
+
+    final parsed = ParsedBankSms(
+      amount: amount,
+      isExpense: isExpense,
+      category: category,
+      note: merchant,
+      paymentMethod: 'Bank / UPI',
+      rawMessage: 'Payment detected for $merchant',
+      sender: 'BANK',
+      isConfident: false,
+      date: DateTime.now(),
+      transactionId: transactionId?.isNotEmpty == true ? transactionId : null,
+    );
+
+    await _showCategoryPickerForSms(parsed);
+  }
+
+  Future<void> _handleAutoLogged(ParsedBankSms parsed) async {
+    // Show Android system notification so user can tap it from anywhere
+    unawaited(BankSmsService.showPaymentNotification(parsed));
+
+    final type = parsed.isExpense ? 'Expense' : 'Income';
+    final symbol = parsed.isExpense ? '-' : '+';
+    final isConf = parsed.isConfident;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.fromLTRB(16, 0, 16, 92),
+        backgroundColor: AppColor.card,
+        elevation: 6,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: (isConf ? AppColor.mint : AppColor.coral).withValues(
+              alpha: 0.6,
+            ),
+            width: 1.2,
+          ),
+        ),
+        content: Row(
+          children: [
+            Icon(
+              isConf
+                  ? (parsed.isExpense
+                        ? Icons.arrow_upward_rounded
+                        : Icons.arrow_downward_rounded)
+                  : Icons.help_outline_rounded,
+              color: isConf
+                  ? (parsed.isExpense ? AppColor.coral : AppColor.mint)
+                  : Colors.amber,
+              size: 20,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isConf
+                        ? 'Auto-logged $type · ${parsed.category}'
+                        : 'New $type detected · Category needed',
+                    style: TextStyle(
+                      color: isConf ? AppColor.muted : Colors.amber,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    '${parsed.note}  ·  $symbol₹${parsed.amount.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      color: AppColor.text,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: isConf ? 'Change' : 'Categorize',
+          textColor: AppColor.mint,
+          onPressed: () => _showCategoryPickerForSms(parsed),
+        ),
+        duration: Duration(seconds: isConf ? 5 : 9),
+      ),
+    );
+  }
+
+  Future<void> _showCategoryPickerForSms(ParsedBankSms parsed) async {
+    final chosen = await CategoryPickerSheet.show(
+      context: context,
+      merchant: parsed.note,
+      amount: parsed.amount,
+      isExpense: parsed.isExpense,
+      currentCategory: parsed.category,
+    );
+    if (chosen != null && mounted) {
+      await MerchantCategoryStore.learn(parsed.note, chosen);
+      final txId = parsed.transactionId;
+      if (widget.userId != null && txId != null) {
+        final repo = TransactionRepository(widget.userId!);
+        await repo.update(
+          AppTransaction(
+            id: txId,
+            amount: parsed.amount,
+            isExpense: parsed.isExpense,
+            category: chosen,
+            note: parsed.note,
+            paymentMethod: parsed.paymentMethod,
+            date: parsed.date,
+          ),
+        );
+      }
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             behavior: SnackBarBehavior.floating,
@@ -395,37 +568,19 @@ class _ExpenseTrackerShellState extends State<ExpenseTrackerShell> {
             content: Row(
               children: [
                 Icon(
-                  parsed.isExpense
-                      ? Icons.arrow_upward_rounded
-                      : Icons.arrow_downward_rounded,
-                  color: parsed.isExpense ? AppColor.coral : AppColor.mint,
+                  Icons.check_circle_rounded,
+                  color: AppColor.mint,
                   size: 20,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Auto-logged $type from Bank SMS',
-                        style: TextStyle(
-                          color: AppColor.muted,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      Text(
-                        '${parsed.note}  ·  $symbol₹${parsed.amount.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          color: AppColor.text,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+                  child: Text(
+                    'Updated to $chosen! FlowLedger will remember this for "${parsed.note}".',
+                    style: TextStyle(
+                      color: AppColor.text,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -433,8 +588,8 @@ class _ExpenseTrackerShellState extends State<ExpenseTrackerShell> {
             duration: const Duration(seconds: 4),
           ),
         );
-      },
-    );
+      }
+    }
   }
 
   @override
@@ -452,7 +607,6 @@ class _ExpenseTrackerShellState extends State<ExpenseTrackerShell> {
     return AnimatedBuilder(
       animation: AppColor.revision,
       builder: (context, child) {
-        final pages = _buildPages();
         return Scaffold(
           resizeToAvoidBottomInset: false,
           backgroundColor: AppColor.bg,
@@ -461,6 +615,7 @@ class _ExpenseTrackerShellState extends State<ExpenseTrackerShell> {
               // Static ambient background behind all tabs (prevents GPU re-rastering on swipe)
               if (AppColor.showAmbientBackground)
                 Positioned.fill(
+                  key: const ValueKey('ambient-background'),
                   child: RepaintBoundary(
                     child: LiquidBackground(
                       standalone: true,
@@ -469,20 +624,25 @@ class _ExpenseTrackerShellState extends State<ExpenseTrackerShell> {
                   ),
                 ),
               Positioned.fill(
+                key: const ValueKey('tab-page-view'),
                 child: PageView(
                   controller: _pageController,
-                  physics: const SensitivePageScrollPhysics(
-                    parent: BouncingScrollPhysics(),
+                  allowImplicitScrolling: true,
+                  physics: const BouncingScrollPhysics(
+                    parent: PageScrollPhysics(),
                   ),
                   onPageChanged: (index) {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    ScaffoldMessenger.of(context).hideCurrentSnackBar();
                     if (_selectedTabNotifier.value != index) {
                       _selectedTabNotifier.value = index;
                     }
                   },
-                  children: pages,
+                  children: _pages,
                 ),
               ),
               Align(
+                key: const ValueKey('tab-dock'),
                 alignment: Alignment.bottomCenter,
                 child: SafeArea(
                   minimum: const EdgeInsets.fromLTRB(20, 0, 20, 18),
@@ -583,10 +743,7 @@ class SmoothPageTransitionsBuilder extends PageTransitionsBuilder {
       end: Offset.zero,
     ).animate(curvedAnimation);
 
-    final fadeIn = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(curvedAnimation);
+    final fadeIn = Tween<double>(begin: 0.0, end: 1.0).animate(curvedAnimation);
 
     final secondaryCurved = CurvedAnimation(
       parent: secondaryAnimation,
@@ -610,10 +767,7 @@ class SmoothPageTransitionsBuilder extends PageTransitionsBuilder {
         opacity: fadeOut,
         child: SlideTransition(
           position: slideIn,
-          child: FadeTransition(
-            opacity: fadeIn,
-            child: child,
-          ),
+          child: FadeTransition(opacity: fadeIn, child: child),
         ),
       ),
     );

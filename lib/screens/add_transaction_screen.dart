@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../core/app_colors.dart';
+import '../core/merchant_category_store.dart';
 import '../models/app_transaction.dart';
 import '../models/categories.dart';
 import '../providers/providers.dart';
@@ -78,6 +79,16 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
     if (picked != null) setState(() => _date = picked);
   }
 
+  void _resetForm() {
+    _amount.clear();
+    _note.clear();
+    _customCategory.clear();
+    _isExpense = true;
+    _category = expenseCategories.first.name;
+    _payment = 'Cash';
+    _date = DateTime.now();
+  }
+
   Future<void> _save() async {
     final amount = double.tryParse(_amount.text.trim());
     if (amount == null || amount <= 0) {
@@ -113,8 +124,17 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
           onTimeout: () => throw TimeoutException('Network timed out while updating in Firestore.'),
         );
       }
+      if (transaction.note.trim().isNotEmpty) {
+        unawaited(MerchantCategoryStore.learn(transaction.note.trim(), transaction.category));
+      }
       if (mounted) {
-        setState(() => _saving = false);
+        FocusManager.instance.primaryFocus?.unfocus();
+        setState(() {
+          _saving = false;
+          if (widget.existing == null) {
+            _resetForm();
+          }
+        });
         if (widget.onSaved != null) {
           widget.onSaved!();
         } else {
@@ -135,7 +155,10 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
     final canPop = Navigator.canPop(context);
     return Scaffold(
       backgroundColor: AppColor.bg,
-      body: StandardPage(
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+        child: StandardPage(
         title: editing ? 'Edit transaction' : 'Add transaction',
         subtitle: _isExpense
             ? 'Log an expense in seconds'
@@ -153,11 +176,14 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                     ButtonSegment(value: false, label: Text('Income')),
                   ],
                   selected: {_isExpense},
-                  onSelectionChanged: (selection) => setState(() {
-                    _isExpense = selection.first;
-                    _customCategory.clear();
-                    _category = _cats.first.name;
-                  }),
+                  onSelectionChanged: (selection) {
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    setState(() {
+                      _isExpense = selection.first;
+                      _customCategory.clear();
+                      _category = _cats.first.name;
+                    });
+                  },
                 ),
                 const SizedBox(height: 20),
                 TextField(
@@ -201,10 +227,13 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                     selected:
                         _customCategory.text.trim().isEmpty &&
                         _category == category.name,
-                    onSelected: (_) => setState(() {
-                      _customCategory.clear();
-                      _category = category.name;
-                    }),
+                    onSelected: (_) {
+                      FocusManager.instance.primaryFocus?.unfocus();
+                      setState(() {
+                        _customCategory.clear();
+                        _category = category.name;
+                      });
+                    },
                   ),
                 )
                 .toList(),
@@ -246,7 +275,10 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
                           selectedColor: AppColor.violet.withValues(alpha: .24),
                           labelStyle: TextStyle(color: AppColor.text),
                           selected: _payment == payment,
-                          onSelected: (_) => setState(() => _payment = payment),
+                          onSelected: (_) {
+                            FocusManager.instance.primaryFocus?.unfocus();
+                            setState(() => _payment = payment);
+                          },
                         ),
                       )
                       .toList(),
@@ -293,6 +325,7 @@ class _AddTransactionScreenState extends ConsumerState<AddTransactionScreen> {
           const SizedBox(height: 32),
         ],
       ),
-    );
+    ),
+  );
   }
 }

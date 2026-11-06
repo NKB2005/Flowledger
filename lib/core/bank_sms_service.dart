@@ -149,8 +149,8 @@ class BankSmsService {
     }
 
     try {
-      await repo.add(parsed.toAppTransaction());
-      return parsed;
+      final docId = await repo.add(parsed.toAppTransaction());
+      return parsed.copyWith(transactionId: docId);
     } catch (e) {
       debugPrint('Error saving auto-detected SMS transaction to Firestore: $e');
       return null;
@@ -184,5 +184,37 @@ class BankSmsService {
       debugPrint('Error scanning recent SMS: $e');
       return [];
     }
+  }
+
+  /// Displays an Android system notification prompting the user to add/confirm category
+  static Future<void> showPaymentNotification(ParsedBankSms parsed) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+    try {
+      await _methodChannel.invokeMethod('showPaymentNotification', {
+        'amount': parsed.amount,
+        'merchant': parsed.note,
+        'category': parsed.category,
+        'isExpense': parsed.isExpense,
+        'transactionId': parsed.transactionId ?? '',
+      });
+    } catch (e) {
+      debugPrint('Failed to show payment notification: $e');
+    }
+  }
+
+  /// Retrieves any payment intent that launched the app from a tapped notification
+  static Future<Map<String, dynamic>?> getPendingCategorizeTransaction() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return null;
+    try {
+      final res = await _methodChannel.invokeMapMethod<String, dynamic>('getPendingCategorizeTransaction');
+      return res;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Sets a handler to listen for incoming notification taps while the app is active
+  static void setMethodCallHandler(Future<dynamic> Function(MethodCall call) handler) {
+    _methodChannel.setMethodCallHandler(handler);
   }
 }
